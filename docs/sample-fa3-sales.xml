@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2023/06/29/12648/">
+  <Naglowek>
+    <KodFormularza kodSystemowy="FA (3)" wersjaSchemy="1-0E">FA</KodFormularza>
+    <WariantFormularza>3</WariantFormularza>
+    <DataWytworzeniaFa>2026-07-08T14:22:00</DataWytworzeniaFa>
+    <SystemInfo>InvoiceManager v1.0</SystemInfo>
+  </Naglowek>
+
+  <Podmiot1>
+    <DaneIdentyfikacyjne>
+      <NIP>9876543210</NIP>
+      <Nazwa>Gumijagoda Sp. z o.o.</Nazwa>
+    </DaneIdentyfikacyjne>
+    <Adres>
+      <KodKraju>PL</KodKraju>
+      <AdresL1>ul. Beskidzka 7</AdresL1>
+      <AdresL2>34-500 Zakopane</AdresL2>
+    </Adres>
+  </Podmiot1>
+
+  <Podmiot2>
+    <DaneIdentyfikacyjne>
+      <NIP>6762464585</NIP>
+      <Nazwa>Cukiernia Słodki Róg Sp. z o.o.</Nazwa>
+    </DaneIdentyfikacyjne>
+    <Adres>
+      <KodKraju>PL</KodKraju>
+      <AdresL1>ul. Floriańska 23</AdresL1>
+      <AdresL2>31-019 Kraków</AdresL2>
+    </Adres>
+  </Podmiot2>
+
+  <Fa>
+    <KodWaluty>PLN</KodWaluty>
+    <P_1>2026-07-08</P_1>
+    <P_2>GJ/2026/07/042</P_2>
+    <P_6>2026-07-08</P_6>
+    <P_15>VAT</P_15>
+    <AdnotacjeVAT>
+      <P_16>2</P_16>
+      <P_17>2</P_17>
+      <P_18>2</P_18>
+      <P_18A>2</P_18A>
+      <P_19>2</P_19>
+      <P_22>2</P_22>
+      <P_23>2</P_23>
+      <P_PMarzy>2</P_PMarzy>
+    </AdnotacjeVAT>
+
+    <RodzajFaktury>VAT</RodzajFaktury>
+
+    <FaWiersze>
+      <LiczbaWierszyFaktur>2</LiczbaWierszyFaktur>
+      <WartoscWierszyFaktur1>8400.00</WartoscWierszyFaktur1>
+
+      <FaWiersz>
+        <NrWiersza>1</NrWiersza>
+        <P_7>Żelki gumijagodowe premium 200g (karton 48szt)</P_7>
+        <P_8A>karton</P_8A>
+        <P_8B>30</P_8B>
+        <P_9A>180.00</P_9A>
+        <P_11>5400.00</P_11>
+        <P_12>8</P_12>
+      </FaWiersz>
+
+      <FaWiersz>
+        <NrWiersza>2</NrWiersza>
+        <P_7>Syrop gumijagodowy 500ml (karton 12szt)</P_7>
+        <P_8A>karton</P_8A>
+        <P_8B>20</P_8B>
+        <P_9A>150.00</P_9A>
+        <P_11>3000.00</P_11>
+        <P_12>8</P_12>
+      </FaWiersz>
+    </FaWiersze>
+
+    <Podsumowanie>
+      <P_13_2>8400.00</P_13_2>
+      <P_14_2>672.00</P_14_2>
+    </Podsumowanie>
+
+    <Platnosc>
+      <TerminPlatnosci>
+        <Termin>2026-08-07</Termin>
+      </TerminPlatnosci>
+      <FormaPlatnosci>6</FormaPlatnosci>
+      <RachunekBankowy>
+        <NrRB>82109017640000000145349060</NrRB>
+      </RachunekBankowy>
+    </Platnosc>
+  </Fa>
+</Faktura>

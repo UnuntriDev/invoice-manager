@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2023/06/29/12648/">
+  <Naglowek>
+    <KodFormularza kodSystemowy="FA (3)" wersjaSchemy="1-0E">FA</KodFormularza>
+    <WariantFormularza>3</WariantFormularza>
+    <DataWytworzeniaFa>2026-07-10T10:30:00</DataWytworzeniaFa>
+    <SystemInfo>InvoiceManager v1.0</SystemInfo>
+  </Naglowek>
+
+  <Podmiot1>
+    <DaneIdentyfikacyjne>
+      <NIP>5213000000</NIP>
+      <Nazwa>PackPol Sp. z o.o.</Nazwa>
+    </DaneIdentyfikacyjne>
+    <Adres>
+      <KodKraju>PL</KodKraju>
+      <AdresL1>ul. Przemysłowa 15</AdresL1>
+      <AdresL2>00-001 Warszawa</AdresL2>
+    </Adres>
+  </Podmiot1>
+
+  <Podmiot2>
+    <DaneIdentyfikacyjne>
+      <NIP>9876543210</NIP>
+      <Nazwa>Gumijagoda Sp. z o.o.</Nazwa>
+    </DaneIdentyfikacyjne>
+    <Adres>
+      <KodKraju>PL</KodKraju>
+      <AdresL1>ul. Beskidzka 7</AdresL1>
+      <AdresL2>34-500 Zakopane</AdresL2>
+    </Adres>
+  </Podmiot2>
+
+  <Fa>
+    <KodWaluty>PLN</KodWaluty>
+    <P_1>2026-07-10</P_1>
+    <P_2>FV/2026/07/001</P_2>
+    <P_6>2026-07-10</P_6>
+    <P_15>VAT</P_15>
+    <AdnotacjeVAT>
+      <P_16>2</P_16>
+      <P_17>2</P_17>
+      <P_18>2</P_18>
+      <P_18A>2</P_18A>
+      <P_19>2</P_19>
+      <P_22>2</P_22>
+      <P_23>2</P_23>
+      <P_PMarzy>2</P_PMarzy>
+    </AdnotacjeVAT>
+
+    <RodzajFaktury>VAT</RodzajFaktury>
+
+    <FaWiersze>
+      <LiczbaWierszyFaktur>3</LiczbaWierszyFaktur>
+      <WartoscWierszyFaktur1>12500.00</WartoscWierszyFaktur1>
+
+      <FaWiersz>
+        <NrWiersza>1</NrWiersza>
+        <P_7>Opakowania kartonowe 500ml (paleta 1000szt)</P_7>
+        <P_8A>szt</P_8A>
+        <P_8B>5</P_8B>
+        <P_9A>1200.00</P_9A>
+        <P_11>6000.00</P_11>
+        <P_12>23</P_12>
+      </FaWiersz>
+
+      <FaWiersz>
+        <NrWiersza>2</NrWiersza>
+        <P_7>Etykiety samoprzylepne "Gumijagoda Premium"</P_7>
+        <P_8A>szt</P_8A>
+        <P_8B>10000</P_8B>
+        <P_9A>0.35</P_9A>
+        <P_11>3500.00</P_11>
+        <P_12>23</P_12>
+      </FaWiersz>
+
+      <FaWiersz>
+        <NrWiersza>3</NrWiersza>
+        <P_7>Folia termokurczliwa 200m</P_7>
+        <P_8A>szt</P_8A>
+        <P_8B>20</P_8B>
+        <P_9A>150.00</P_9A>
+        <P_11>3000.00</P_11>
+        <P_12>23</P_12>
+      </FaWiersz>
+    </FaWiersze>
+
+    <Podsumowanie>
+      <P_13_1>12500.00</P_13_1>
+      <P_14_1>2875.00</P_14_1>
+    </Podsumowanie>
+
+    <Platnosc>
+      <TerminPlatnosci>
+        <Termin>2026-08-09</Termin>
+      </TerminPlatnosci>
+      <FormaPlatnosci>6</FormaPlatnosci>
+      <RachunekBankowy>
+        <NrRB>61109010140000071219812874</NrRB>
+      </RachunekBankowy>
+    </Platnosc>
+  </Fa>
+</Faktura>

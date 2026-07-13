@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://invoices:invoices123@db:5432/invoices?schema=public
+      - KSEF_TOKEN=${KSEF_TOKEN:-mock}
+      - KSEF_NIP=${KSEF_NIP:-9876543210}
+      - KSEF_ENV=${KSEF_ENV:-mock}
+      - CRON_SECRET=${CRON_SECRET:-dev-secret-change-in-production}
+      - NODE_ENV=production
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=invoices
+      - POSTGRES_PASSWORD=invoices123
+      - POSTGRES_DB=invoices
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoices"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:

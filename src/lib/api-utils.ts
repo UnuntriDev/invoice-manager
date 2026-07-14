@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { DuplicateError } from "@/lib/services/document.service";
 import { ValidationError } from "@/lib/services/upload.service";
+import { CategoryValidationError } from "@/lib/services/category.service";
 
 export function successResponse(data: unknown, status = 200) {
   return NextResponse.json({ data }, { status });
@@ -15,7 +16,7 @@ export function errorResponse(error: unknown) {
     );
   }
 
-  if (error instanceof ValidationError) {
+  if (error instanceof ValidationError || error instanceof CategoryValidationError) {
     return NextResponse.json(
       { error: error.message },
       { status: 400 }

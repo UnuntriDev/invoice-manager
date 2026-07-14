@@ -108,3 +108,100 @@ export function useUpdateColumnConfig() {
     },
   });
 }
+
+export function useBufferDocuments() {
+  return useQuery({
+    queryKey: ["buffer"],
+    queryFn: () => fetchJson("/api/buffer"),
+  });
+}
+
+export function useAcceptDocuments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (documentIds: string[]) =>
+      fetchJson("/api/documents/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentIds }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buffer"] });
+      qc.invalidateQueries({ queryKey: ["documents"] });
+    },
+  });
+}
+
+export function useKSeFetch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { dateFrom: string; dateTo: string; type: string }) =>
+      fetchJson("/api/ksef/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buffer"] });
+    },
+  });
+}
+
+export function useUploadDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (formData: FormData) =>
+      fetchJson("/api/upload", { method: "POST", body: formData }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buffer"] });
+    },
+  });
+}
+
+export function useKSeFSchedules() {
+  return useQuery({
+    queryKey: ["ksef-schedules"],
+    queryFn: () => fetchJson("/api/ksef/schedule"),
+  });
+}
+
+export function useCreateSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { hour: number; minute: number; fetchType: string; isActive: boolean }) =>
+      fetchJson("/api/ksef/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ksef-schedules"] });
+    },
+  });
+}
+
+export function useUpdateSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { hour: number; minute: number; fetchType: string; isActive: boolean } }) =>
+      fetchJson(`/api/ksef/schedule/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ksef-schedules"] });
+    },
+  });
+}
+
+export function useDeleteSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetchJson(`/api/ksef/schedule/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ksef-schedules"] });
+    },
+  });
+}

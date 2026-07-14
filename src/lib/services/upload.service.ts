@@ -26,24 +26,27 @@ export async function handleUpload(file: File, overrides?: Record<string, string
   const buffer = Buffer.from(bytes);
   const ext = file.type.includes("xml") ? ".xml" : ".pdf";
   const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
-
-  await fs.mkdir(UPLOAD_DIR, { recursive: true });
   const filePath = path.join(UPLOAD_DIR, fileName);
-  await fs.writeFile(filePath, buffer);
 
   if (file.type.includes("xml")) {
-    return handleXmlUpload(buffer.toString("utf-8"), fileName, filePath);
+    return handleXmlUpload(buffer, fileName, filePath);
   }
 
-  return handlePdfUpload(fileName, filePath, overrides);
+  return handlePdfUpload(buffer, fileName, filePath, overrides);
 }
 
-async function handleXmlUpload(content: string, fileName: string, filePath: string) {
+async function handleXmlUpload(buffer: Buffer, fileName: string, filePath: string) {
+  const content = buffer.toString("utf-8");
+
   if (!isKSeFXml(content)) {
     throw new ValidationError("Nie udało się sparsować pliku XML. Sprawdź czy to prawidłowa faktura KSeF.");
   }
 
   const parsed = parseKSeFXml(content);
+
+  if (!parsed.seller.nip) {
+    throw new ValidationError("Brak NIP sprzedawcy w pliku XML");
+  }
 
   let contractor = await prisma.contractor.findUnique({
     where: { nip: parsed.seller.nip },
@@ -78,15 +81,22 @@ async function handleXmlUpload(content: string, fileName: string, filePath: stri
     where: { direction: "PAYABLE", isSystem: true },
   });
 
+  if (!costType) {
+    throw new ValidationError("Brak systemowego typu dokumentu dla faktur kosztowych");
+  }
+
   let categoryId: string | undefined;
   if (contractor.defaultCategoryId) {
     categoryId = contractor.defaultCategoryId;
   }
 
+  await fs.mkdir(UPLOAD_DIR, { recursive: true });
+  await fs.writeFile(filePath, buffer);
+
   return prisma.document.create({
     data: {
       invoiceNumber: parsed.invoiceNumber,
-      documentTypeId: costType!.id,
+      documentTypeId: costType.id,
       contractorId: contractor.id,
       issueDate: new Date(parsed.issueDate),
       dueDate: parsed.dueDate ? new Date(parsed.dueDate) : new Date(parsed.issueDate),
@@ -110,9 +120,25 @@ async function handleXmlUpload(content: string, fileName: string, filePath: stri
   });
 }
 
-async function handlePdfUpload(fileName: string, filePath: string, overrides?: Record<string, string>) {
+async function handlePdfUpload(buffer: Buffer, fileName: string, filePath: string, overrides?: Record<string, string>) {
   if (!overrides?.invoiceNumber || !overrides?.contractorId || !overrides?.documentTypeId) {
     throw new ValidationError("Dla pliku PDF wymagane są: numer faktury, kontrahent i typ dokumentu");
+  }
+
+  const amountNet = parseFloat(overrides.amountNet || "0");
+  const amountVat = parseFloat(overrides.amountVat || "0");
+  const amountGross = parseFloat(overrides.amountGross || "0");
+
+  if (isNaN(amountNet) || isNaN(amountVat) || isNaN(amountGross)) {
+    throw new ValidationError("Kwoty muszą być liczbami");
+  }
+
+  if (amountNet < 0 || amountVat < 0 || amountGross < 0) {
+    throw new ValidationError("Kwoty nie mogą być ujemne");
+  }
+
+  if (amountGross > 0 && Math.abs(amountGross - (amountNet + amountVat)) > 0.01) {
+    throw new ValidationError("Kwota brutto musi być równa sumie netto + VAT");
   }
 
   const existing = await prisma.document.findUnique({
@@ -135,6 +161,9 @@ async function handlePdfUpload(fileName: string, filePath: string, overrides?: R
     select: { defaultCategoryId: true },
   });
 
+  await fs.mkdir(UPLOAD_DIR, { recursive: true });
+  await fs.writeFile(filePath, buffer);
+
   return prisma.document.create({
     data: {
       invoiceNumber: overrides.invoiceNumber,
@@ -142,9 +171,9 @@ async function handlePdfUpload(fileName: string, filePath: string, overrides?: R
       contractorId: overrides.contractorId,
       issueDate: new Date(overrides.issueDate || new Date()),
       dueDate: new Date(overrides.dueDate || new Date()),
-      amountNet: parseFloat(overrides.amountNet || "0"),
-      amountVat: parseFloat(overrides.amountVat || "0"),
-      amountGross: parseFloat(overrides.amountGross || "0"),
+      amountNet,
+      amountVat,
+      amountGross,
       bankAccountNumber: overrides.bankAccountNumber || null,
       categoryId: overrides.categoryId || contractor?.defaultCategoryId || null,
       source: "UPLOAD",

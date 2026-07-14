@@ -120,11 +120,15 @@ export function parseKSeFXml(xmlString: string): ParsedInvoice {
     if (podsumowanie[vatKey]) amountVat += Number(podsumowanie[vatKey]);
   }
 
-  if (amountNet === 0 && lineItems.length > 0) {
-    amountNet = lineItems.reduce((sum, item) => sum + item.amountNet, 0);
-    amountVat = lineItems.reduce((sum, item) => {
-      return sum + Math.round(item.amountNet * (item.vatRate / 100) * 100) / 100;
-    }, 0);
+  if (lineItems.length > 0 && (amountNet === 0 || amountVat === 0)) {
+    if (amountNet === 0) {
+      amountNet = lineItems.reduce((sum, item) => sum + item.amountNet, 0);
+    }
+    if (amountVat === 0) {
+      amountVat = lineItems.reduce((sum, item) => {
+        return sum + Math.round(item.amountNet * (item.vatRate / 100) * 100) / 100;
+      }, 0);
+    }
   }
 
   const amountGross = Math.round((amountNet + amountVat) * 100) / 100;

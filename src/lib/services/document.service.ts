@@ -45,6 +45,11 @@ export async function listDocuments(params: ListParams = {}) {
     ];
   }
 
+  const SORTABLE_FIELDS = new Set([
+    "invoiceNumber", "issueDate", "dueDate", "amountNet", "amountVat",
+    "amountGross", "status", "source", "createdAt", "updatedAt",
+  ]);
+
   const orderBy: Prisma.DocumentOrderByWithRelationInput = {};
   const sortField = params.sortBy || "issueDate";
   const sortOrder = params.sortOrder || "desc";
@@ -53,8 +58,10 @@ export async function listDocuments(params: ListParams = {}) {
     orderBy.contractor = { name: sortOrder };
   } else if (sortField === "documentType") {
     orderBy.documentType = { name: sortOrder };
-  } else {
+  } else if (SORTABLE_FIELDS.has(sortField)) {
     (orderBy as Record<string, string>)[sortField] = sortOrder;
+  } else {
+    orderBy.issueDate = sortOrder;
   }
 
   return prisma.document.findMany({

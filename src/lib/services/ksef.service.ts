@@ -11,12 +11,33 @@ export async function fetchFromKSeF(params: KSeFFetchParams) {
   let skipped = 0;
   const errors: string[] = [];
 
+  const isCost = params.type === "COST";
+  const docType = await prisma.documentType.findFirst({
+    where: {
+      direction: isCost ? "PAYABLE" : "RECEIVABLE",
+      isSystem: true,
+    },
+  });
+
+  if (!docType) {
+    return {
+      total: invoices.length,
+      imported: 0,
+      skipped: 0,
+      errors: [`Brak systemowego typu dokumentu dla ${isCost ? "kosztowych" : "sprzedażowych"}`],
+    };
+  }
+
   for (const inv of invoices) {
     try {
-      const isCost = params.type === "COST";
       const counterpartyNip = isCost ? inv.seller.nip : inv.buyer.nip;
       const counterpartyName = isCost ? inv.seller.name : inv.buyer.name;
       const counterpartyAddress = isCost ? inv.seller.address : inv.buyer.address;
+
+      if (!counterpartyNip) {
+        errors.push(`Faktura ${inv.invoiceNumber}: brak NIP kontrahenta`);
+        continue;
+      }
 
       let contractor = await prisma.contractor.findUnique({
         where: { nip: counterpartyNip },
@@ -30,18 +51,6 @@ export async function fetchFromKSeF(params: KSeFFetchParams) {
             address: counterpartyAddress,
           },
         });
-      }
-
-      const docType = await prisma.documentType.findFirst({
-        where: {
-          direction: isCost ? "PAYABLE" : "RECEIVABLE",
-          isSystem: true,
-        },
-      });
-
-      if (!docType) {
-        errors.push(`Brak systemowego typu dokumentu dla ${isCost ? "kosztowych" : "sprzedażowych"}`);
-        continue;
       }
 
       await prisma.document.create({
@@ -72,8 +81,8 @@ export async function fetchFromKSeF(params: KSeFFetchParams) {
       ) {
         skipped++;
       } else {
-        const msg = error instanceof Error ? error.message : "Nieznany błąd";
-        errors.push(`Faktura ${inv.invoiceNumber}: ${msg}`);
+        errors.push(`Faktura ${inv.invoiceNumber}: błąd importu`);
+        console.error(`[KSeF] Import error for ${inv.invoiceNumber}:`, error);
       }
     }
   }

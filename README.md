@@ -1,36 +1,98 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# System zarządzania fakturami — Gumijagoda Sp. z o.o.
 
-## Getting Started
+## Wersja wdrożona
 
-First, run the development server:
+[Link do aplikacji](https://... — uzupełnię po deploy)
+
+## Research rynku
+
+Istniejące rozwiązania (Fakturownia, wFirma, SaldeoSMART) oferują integrację z KSeF, auto-pobieranie danych z GUS po NIP i dwuetapowy obieg faktur kosztowych (bufor → akceptacja). Z tych rozwiązań zaczerpnąłem wzorzec bufora jako poczekalni przed rejestrem oraz auto-kategoryzację na podstawie kontrahenta. Moje podejście różni się czystą architekturą warstwową w Next.js z adapterem KSeF (mock/real) i pełną walidacją NIP/IBAN z sumami kontrolnymi.
+
+## Architektura
+
+Aplikacja w architekturze warstwowej:
+
+- **Frontend**: React + Next.js App Router + shadcn/ui + TanStack Table/Query
+- **API Layer**: Next.js Route Handlers — cienka warstwa walidacji Zod
+- **Service Layer**: logika biznesowa (services/) — CRUD, auto-kategoryzacja, duplikaty
+- **Data Layer**: Prisma ORM + PostgreSQL
+- **Integracja KSeF**: Adapter pattern (IKSeFClient → MockKSeFClient)
+
+Logika biznesowa nie żyje w komponentach React.
+
+## Decyzje technologiczne
+
+- **Bufor jako status dokumentu** (BUFFER/ACCEPTED) zamiast osobnej tabeli — jedno źródło prawdy
+- **Adapter pattern dla KSeF** — czysta abstrakcja, łatwe przełączenie mock↔real
+- **Unique constraint** [invoiceNumber, contractorId] — duplikaty blokowane na poziomie DB
+- **Kategorie jako self-referencing relation** — drzewo dowolnej głębokości
+- **xmlData jako JSONB** — surowy XML przechowywany raz, parsowany on-demand w podglądzie
+- **shadcn/ui + TanStack Table** — konfigurowalne kolumny, sortowanie, filtrowanie
+- **react-pdf** — podgląd PDF z zoomem i nawigacją stron w przeglądarce
+
+## Uruchomienie lokalne
 
 ```bash
+git clone <repo-url>
+cd invoice-manager
+cp .env.example .env
+docker compose up -d db
+npm install
+npx prisma migrate dev
+npx prisma db seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Lub jedną komendą:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+docker compose up --build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Aplikacja będzie dostępna pod `http://localhost:3000`.
 
-## Learn More
+## Dane testowe (seed)
 
-To learn more about Next.js, take a look at the following resources:
+- 5 kontrahentów (PackPol, CukroPol, TransChłód, EkoNawóz, Cukiernia Słodki Róg)
+- 10 kategorii w drzewie 3-poziomowym (Koszty operacyjne → Surowce/Opakowania/Transport)
+- 9 dokumentów (6 zaakceptowanych + 3 w buforze, mix źródeł KSeF/Upload/Ręczny)
+- 3 typy dokumentów (2 systemowe + 1 custom)
+- 3 wpisy harmonogramu KSeF (1:00, 7:00, 13:00)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Testy
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npx jest --passWithNoTests
+```
 
-## Deploy on Vercel
+Testy jednostkowe pokrywają:
+- Walidację NIP (sumy kontrolne, formaty)
+- Walidację IBAN (sumy kontrolne, formaty PL)
+- Parser XML KSeF (parsowanie faktur, ekstrakcja danych)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Znane ograniczenia
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- KSeF: warstwa mock z realistycznymi danymi (adapter pattern gotowy na realną integrację)
+- Brak logowania i ról (tryb jednego użytkownika, zgodnie z wymaganiami)
+- Pliki przechowywane na dysku (w produkcji: S3/Azure Blob Storage)
+- Brak OCR na PDF — wymaga ręcznego uzupełnienia danych
+- Brak paginacji server-side (przy dużych zbiorach: cursor-based z Prisma)
+
+## Co zrobiłbym dalej
+
+1. Realna integracja z KSeF 2.0 API (JWT + AES-256-CBC)
+2. Paginacja server-side (cursor-based)
+3. OCR na PDF (Azure Document Intelligence / Tesseract)
+4. Logowanie + role (NextAuth.js — admin / księgowy / viewer)
+5. Full-text search (PostgreSQL tsvector)
+6. Audit log — historia zmian dokumentów
+7. Auto-uzupełnianie danych po NIP (API białej listy MF)
+8. CI/CD (GitHub Actions: lint, testy, deploy)
+
+## Założenia
+
+- Upload trafia do bufora (spójny obieg ze źródłem KSeF)
+- Dokumenty ręczne trafiają bezpośrednio do rejestru (nie wymagają akceptacji)
+- Auto-kategoryzacja nie nadpisuje ręcznie przypisanej kategorii
+- Typy systemowe nie mogą być usunięte
+- Duplikat = ta sama para (numer faktury + kontrahent)

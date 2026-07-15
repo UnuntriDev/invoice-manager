@@ -11,7 +11,7 @@ export interface DocumentRow {
   id: string;
   invoiceNumber: string;
   documentType: { name: string };
-  contractor: { name: string };
+  contractor: { name: string; nip?: string; address?: string };
   issueDate: string;
   dueDate: string;
   amountNet: string | number;
@@ -22,6 +22,10 @@ export interface DocumentRow {
   status: "BUFFER" | "ACCEPTED";
   ksefNumber: string | null;
   bankAccountNumber: string | null;
+  fileName: string | null;
+  filePath: string | null;
+  fileType: string | null;
+  xmlData: Record<string, unknown> | null;
 }
 
 function formatCurrency(val: string | number) {

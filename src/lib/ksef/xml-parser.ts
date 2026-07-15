@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { Decimal, normalizeMoney } from "@/lib/money";
 
 export interface ParsedInvoice {
   schemaVersion: number;
@@ -22,13 +23,13 @@ export interface ParsedInvoice {
     description: string;
     unit?: string;
     quantity: number;
-    unitPriceNet: number;
-    amountNet: number;
+    unitPriceNet: string;
+    amountNet: string;
     vatRate: number;
   }>;
-  amountNet: number;
-  amountVat: number;
-  amountGross: number;
+  amountNet: string;
+  amountVat: string;
+  amountGross: string;
   bankAccountNumber?: string;
 }
 
@@ -104,34 +105,46 @@ export function parseKSeFXml(xmlString: string): ParsedInvoice {
     description: String(item.P_7 || ""),
     unit: item.P_8A ? String(item.P_8A) : undefined,
     quantity: Number(item.P_8B || 0),
-    unitPriceNet: Number(item.P_9A || 0),
-    amountNet: Number(item.P_11 || item.P_11A || 0),
+    unitPriceNet: normalizeMoney(String(item.P_9A || "0")),
+    amountNet: normalizeMoney(String(item.P_11 || item.P_11A || "0")),
     vatRate: Number(item.P_12 || 0),
   }));
 
   const podsumowanie = fa.Podsumowanie || {};
-  let amountNet = 0;
-  let amountVat = 0;
+  let amountNet = new Decimal(0);
+  let amountVat = new Decimal(0);
 
   for (let i = 1; i <= 11; i++) {
     const netKey = `P_13_${i}`;
     const vatKey = `P_14_${i}`;
-    if (podsumowanie[netKey]) amountNet += Number(podsumowanie[netKey]);
-    if (podsumowanie[vatKey]) amountVat += Number(podsumowanie[vatKey]);
+    if (podsumowanie[netKey]) {
+      amountNet = amountNet.plus(String(podsumowanie[netKey]));
+    }
+    if (podsumowanie[vatKey]) {
+      amountVat = amountVat.plus(String(podsumowanie[vatKey]));
+    }
   }
 
-  if (lineItems.length > 0 && (amountNet === 0 || amountVat === 0)) {
-    if (amountNet === 0) {
-      amountNet = lineItems.reduce((sum, item) => sum + item.amountNet, 0);
+  if (lineItems.length > 0 && (amountNet.isZero() || amountVat.isZero())) {
+    if (amountNet.isZero()) {
+      amountNet = lineItems.reduce(
+        (sum, item) => sum.plus(item.amountNet),
+        new Decimal(0)
+      );
     }
-    if (amountVat === 0) {
+    if (amountVat.isZero()) {
       amountVat = lineItems.reduce((sum, item) => {
-        return sum + Math.round(item.amountNet * (item.vatRate / 100) * 100) / 100;
-      }, 0);
+        return sum.plus(
+          new Decimal(item.amountNet)
+            .times(String(item.vatRate))
+            .dividedBy(100)
+            .toDecimalPlaces(2)
+        );
+      }, new Decimal(0));
     }
   }
 
-  const amountGross = Math.round((amountNet + amountVat) * 100) / 100;
+  const amountGross = amountNet.plus(amountVat);
 
   return {
     schemaVersion,
@@ -143,9 +156,9 @@ export function parseKSeFXml(xmlString: string): ParsedInvoice {
     seller,
     buyer,
     lineItems,
-    amountNet: Math.round(amountNet * 100) / 100,
-    amountVat: Math.round(amountVat * 100) / 100,
-    amountGross,
+    amountNet: amountNet.toFixed(2),
+    amountVat: amountVat.toFixed(2),
+    amountGross: amountGross.toFixed(2),
     bankAccountNumber,
   };
 }

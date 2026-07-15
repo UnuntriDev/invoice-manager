@@ -51,15 +51,15 @@ describe("parseKSeFXml", () => {
     expect(result.lineItems).toHaveLength(3);
     expect(result.lineItems[0].description).toContain("Opakowania kartonowe");
     expect(result.lineItems[0].quantity).toBe(5);
-    expect(result.lineItems[0].unitPriceNet).toBe(1200);
-    expect(result.lineItems[0].amountNet).toBe(6000);
+    expect(result.lineItems[0].unitPriceNet).toBe("1200.00");
+    expect(result.lineItems[0].amountNet).toBe("6000.00");
   });
 
   it("parses amounts from Podsumowanie", () => {
     const result = parseKSeFXml(sampleXml);
-    expect(result.amountNet).toBe(12500);
-    expect(result.amountVat).toBe(2875);
-    expect(result.amountGross).toBe(15375);
+    expect(result.amountNet).toBe("12500.00");
+    expect(result.amountVat).toBe("2875.00");
+    expect(result.amountGross).toBe("15375.00");
   });
 
   it("parses bank account", () => {

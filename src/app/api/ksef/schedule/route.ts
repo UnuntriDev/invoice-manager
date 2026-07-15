@@ -7,6 +7,18 @@ export async function GET() {
   try {
     const schedules = await prisma.kSeFSchedule.findMany({
       orderBy: { hour: "asc" },
+      select: {
+        id: true,
+        hour: true,
+        minute: true,
+        isActive: true,
+        fetchType: true,
+        lastRunAt: true,
+        lastError: true,
+        lastErrorAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
     return successResponse(schedules);
   } catch (error) {

@@ -51,6 +51,10 @@ import {
   useUpdateDocumentType,
   useDeleteDocumentType,
 } from "@/lib/hooks/use-documents";
+import {
+  documentTypeCreateSchema,
+  documentTypeUpdateSchema,
+} from "@/lib/validators/schemas";
 
 interface DocType {
   id: string;
@@ -93,10 +97,20 @@ export default function DocumentTypesPage() {
   async function handleSave() {
     try {
       if (editType) {
-        await updateType.mutateAsync({ id: editType.id, data: { name } });
+        const validation = documentTypeUpdateSchema.safeParse({ name });
+        if (!validation.success) {
+          toast.error(validation.error.issues[0]?.message ?? "Popraw dane typu dokumentu");
+          return;
+        }
+        await updateType.mutateAsync({ id: editType.id, data: validation.data });
         toast.success("Typ dokumentu zaktualizowany");
       } else {
-        await createType.mutateAsync({ name, direction });
+        const validation = documentTypeCreateSchema.safeParse({ name, direction });
+        if (!validation.success) {
+          toast.error(validation.error.issues[0]?.message ?? "Popraw dane typu dokumentu");
+          return;
+        }
+        await createType.mutateAsync(validation.data);
         toast.success("Typ dokumentu dodany");
       }
       setFormOpen(false);
@@ -120,9 +134,9 @@ export default function DocumentTypesPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between border-b pb-5">
         <div>
-          <h1 className="text-2xl font-bold">Typy dokumentów</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Typy dokumentów</h1>
           <p className="text-sm text-muted-foreground">
             Zarządzaj typami faktur i dokumentów księgowych
           </p>

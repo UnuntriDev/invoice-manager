@@ -1,139 +1,189 @@
 import prisma from "@/lib/prisma";
 import { createKSeFClient } from "@/lib/ksef/ksef-mock.client";
-import type { KSeFFetchParams } from "@/lib/ksef/ksef-client.interface";
+import type {
+  IKSeFClient,
+  KSeFFetchParams,
+  KSeFInvoice,
+  KSeFParty,
+} from "@/lib/ksef/ksef-client.interface";
+import { ksefInvoiceBatchSchema } from "@/lib/validators/schemas";
+import { parseMoney } from "@/lib/money";
 
-export async function fetchFromKSeF(params: KSeFFetchParams) {
-  const client = createKSeFClient();
-
-  const invoices = await client.fetchInvoices(params);
-
-  let imported = 0;
-  let skipped = 0;
-  const errors: string[] = [];
-
-  const isCost = params.type === "COST";
-  const docType = await prisma.documentType.findFirst({
-    where: {
-      direction: isCost ? "PAYABLE" : "RECEIVABLE",
-      isSystem: true,
-    },
-  });
-
-  if (!docType) {
-    return {
-      total: invoices.length,
-      imported: 0,
-      skipped: 0,
-      errors: [`Brak systemowego typu dokumentu dla ${isCost ? "kosztowych" : "sprzedażowych"}`],
-    };
-  }
-
-  for (const inv of invoices) {
-    try {
-      const counterpartyNip = isCost ? inv.seller.nip : inv.buyer.nip;
-      const counterpartyName = isCost ? inv.seller.name : inv.buyer.name;
-      const counterpartyAddress = isCost ? inv.seller.address : inv.buyer.address;
-
-      if (!counterpartyNip) {
-        errors.push(`Faktura ${inv.invoiceNumber}: brak NIP kontrahenta`);
-        continue;
-      }
-
-      let contractor = await prisma.contractor.findUnique({
-        where: { nip: counterpartyNip },
-      });
-
-      if (!contractor) {
-        contractor = await prisma.contractor.create({
-          data: {
-            name: counterpartyName,
-            nip: counterpartyNip,
-            address: counterpartyAddress,
-          },
-        });
-      }
-
-      await prisma.document.create({
-        data: {
-          invoiceNumber: inv.invoiceNumber,
-          documentTypeId: docType.id,
-          contractorId: contractor.id,
-          issueDate: new Date(inv.issueDate),
-          dueDate: new Date(inv.dueDate),
-          amountNet: inv.amountNet,
-          amountVat: inv.amountVat,
-          amountGross: inv.amountGross,
-          bankAccountNumber: inv.bankAccountNumber,
-          categoryId: contractor.defaultCategoryId,
-          source: "KSEF",
-          ksefNumber: inv.ksefNumber,
-          status: "BUFFER",
-          xmlData: { xmlContent: inv.xmlContent },
-        },
-      });
-
-      imported++;
-    } catch (error: unknown) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        (error as { code: string }).code === "P2002"
-      ) {
-        skipped++;
-      } else {
-        errors.push(`Faktura ${inv.invoiceNumber}: błąd importu`);
-        console.error(`[KSeF] Import error for ${inv.invoiceNumber}:`, error);
-      }
+export type KSeFImportResult =
+  | {
+      success: true;
+      total: number;
+      imported: number;
+      skipped: number;
     }
-  }
+  | {
+      success: false;
+      error: string;
+    };
 
-  return {
-    total: invoices.length,
-    imported,
-    skipped,
-    errors,
-  };
+class MissingDocumentTypeError extends Error {}
+
+function failure(error: string): KSeFImportResult {
+  return { success: false, error };
 }
 
-export async function runScheduledFetch() {
-  const schedules = await prisma.kSeFSchedule.findMany({
-    where: { isActive: true },
-  });
+function getCounterparty(invoice: KSeFInvoice, isCost: boolean): KSeFParty {
+  return isCost ? invoice.seller : invoice.buyer;
+}
 
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
+function removeBatchDuplicates(invoices: KSeFInvoice[], isCost: boolean) {
+  const seenKsefNumbers = new Set<string>();
+  const seenBusinessKeys = new Set<string>();
+  const uniqueInvoices: KSeFInvoice[] = [];
 
-  const results = [];
+  for (const invoice of invoices) {
+    const counterparty = getCounterparty(invoice, isCost);
+    const businessKey = JSON.stringify([invoice.invoiceNumber, counterparty.nip]);
 
-  for (const schedule of schedules) {
-    if (schedule.hour !== currentHour || schedule.minute !== currentMinute) {
+    // Numer KSeF jest głównym kluczem idempotentności. Para numer faktury + NIP
+    // pozostaje dodatkowym kluczem biznesowym zgodnym z ograniczeniem w bazie.
+    if (
+      seenKsefNumbers.has(invoice.ksefNumber) ||
+      seenBusinessKeys.has(businessKey)
+    ) {
       continue;
     }
 
-    const dateTo = new Date().toISOString().split("T")[0];
-    const dateFrom = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-
-    const types: ("COST" | "SALES")[] =
-      schedule.fetchType === "BOTH"
-        ? ["COST", "SALES"]
-        : [schedule.fetchType as "COST" | "SALES"];
-
-    for (const type of types) {
-      try {
-        const result = await fetchFromKSeF({ dateFrom, dateTo, type });
-        results.push({ scheduleId: schedule.id, type, ...result });
-
-        await prisma.kSeFSchedule.update({
-          where: { id: schedule.id },
-          data: { lastRunAt: new Date() },
-        });
-      } catch (error) {
-        console.error(`[CRON] Błąd pobierania KSeF (schedule ${schedule.id}, type ${type}):`, error);
-        results.push({ scheduleId: schedule.id, type, error: "Błąd pobierania" });
-      }
-    }
+    seenKsefNumbers.add(invoice.ksefNumber);
+    seenBusinessKeys.add(businessKey);
+    uniqueInvoices.push(invoice);
   }
 
-  return results;
+  return uniqueInvoices;
+}
+
+export async function importKSeFBatch(
+  invoices: KSeFInvoice[],
+  params: KSeFFetchParams
+): Promise<KSeFImportResult> {
+  const validation = ksefInvoiceBatchSchema.safeParse(invoices);
+
+  if (!validation.success) {
+    const message = validation.error.issues[0]?.message ?? "Nieprawidłowy batch KSeF";
+    return failure(`KSeF zwrócił nieprawidłowe dane: ${message}`);
+  }
+
+  const validatedInvoices = validation.data;
+  if (validatedInvoices.length === 0) {
+    return { success: true, total: 0, imported: 0, skipped: 0 };
+  }
+
+  const isCost = params.type === "COST";
+  const uniqueInvoices = removeBatchDuplicates(validatedInvoices, isCost);
+
+  try {
+    const imported = await prisma.$transaction(
+      async (tx) => {
+        const docType = await tx.documentType.findFirst({
+          where: {
+            direction: isCost ? "PAYABLE" : "RECEIVABLE",
+            isSystem: true,
+          },
+        });
+
+        if (!docType) {
+          throw new MissingDocumentTypeError(
+            `Brak systemowego typu dokumentu dla faktur ${
+              isCost ? "kosztowych" : "sprzedażowych"
+            }`
+          );
+        }
+
+        const contractorsByNip = new Map<string, { id: string; defaultCategoryId: string | null }>();
+
+        for (const invoice of uniqueInvoices) {
+          const counterparty = getCounterparty(invoice, isCost);
+          if (contractorsByNip.has(counterparty.nip)) {
+            continue;
+          }
+
+          const contractor = await tx.contractor.upsert({
+            where: { nip: counterparty.nip },
+            update: {},
+            create: {
+              name: counterparty.name,
+              nip: counterparty.nip,
+              address: counterparty.address,
+            },
+            select: { id: true, defaultCategoryId: true },
+          });
+
+          contractorsByNip.set(counterparty.nip, contractor);
+        }
+
+        const documents = uniqueInvoices.map((invoice) => {
+          const counterparty = getCounterparty(invoice, isCost);
+          const contractor = contractorsByNip.get(counterparty.nip);
+
+          if (!contractor) {
+            throw new Error(`Nie znaleziono kontrahenta o NIP ${counterparty.nip}`);
+          }
+
+          return {
+            invoiceNumber: invoice.invoiceNumber,
+            documentTypeId: docType.id,
+            contractorId: contractor.id,
+            issueDate: new Date(`${invoice.issueDate}T00:00:00.000Z`),
+            dueDate: new Date(`${invoice.dueDate}T00:00:00.000Z`),
+            amountNet: parseMoney(invoice.amountNet),
+            amountVat: parseMoney(invoice.amountVat),
+            amountGross: parseMoney(invoice.amountGross),
+            bankAccountNumber: invoice.bankAccountNumber,
+            categoryId: contractor.defaultCategoryId,
+            source: "KSEF" as const,
+            ksefNumber: invoice.ksefNumber,
+            status: "BUFFER" as const,
+            xmlData: { xmlContent: invoice.xmlContent },
+          };
+        });
+
+        // PostgreSQL realizuje skipDuplicates przez ON CONFLICT DO NOTHING.
+        // Obejmuje to numer KSeF, klucz biznesowy i duplikaty współbieżne.
+        const created = await tx.document.createMany({
+          data: documents,
+          skipDuplicates: true,
+        });
+
+        return created.count;
+      },
+      { maxWait: 10_000, timeout: 30_000 }
+    );
+
+    return {
+      success: true,
+      total: validatedInvoices.length,
+      imported,
+      skipped: validatedInvoices.length - imported,
+    };
+  } catch (error) {
+    if (error instanceof MissingDocumentTypeError) {
+      return failure(error.message);
+    }
+
+    console.error("[KSeF] Batch import transaction failed:", error);
+    return failure(
+      "Nie udało się zapisać dokumentów z KSeF. Żadne dane nie zostały zapisane."
+    );
+  }
+}
+
+export async function fetchFromKSeF(
+  params: KSeFFetchParams,
+  client: IKSeFClient = createKSeFClient()
+): Promise<KSeFImportResult> {
+  let invoices: KSeFInvoice[];
+
+  try {
+    invoices = await client.fetchInvoices(params);
+  } catch (error) {
+    console.error("[KSeF] Fetch failed:", error);
+    return failure("Nie udało się połączyć z KSeF. Spróbuj ponownie.");
+  }
+
+  return importKSeFBatch(invoices, params);
 }

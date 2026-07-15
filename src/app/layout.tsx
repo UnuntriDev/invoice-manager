@@ -26,13 +26,13 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="pl"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      lang="pl-PL"
+      className={`${geistSans.className} ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex h-full">
+      <body className="flex h-full flex-col md:flex-row">
         <Providers>
           <AppSidebar />
-          <main className="flex-1 overflow-auto">{children}</main>
+          <main className="min-w-0 flex-1 overflow-auto">{children}</main>
         </Providers>
       </body>
     </html>

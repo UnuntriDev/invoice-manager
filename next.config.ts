@@ -2,7 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  turbopack: {},
+  serverExternalPackages: ["node-cron"],
+  turbopack: {
+    root: process.cwd(),
+  },
 };
 
 export default nextConfig;

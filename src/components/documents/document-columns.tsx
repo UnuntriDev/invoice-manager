@@ -1,23 +1,46 @@
 "use client";
 
-import { ColumnDef } from "@tanstack/react-table";
+import type { Column, ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowUpDown, Eye } from "lucide-react";
-import { format } from "date-fns";
-import { pl } from "date-fns/locale";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Eye,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import { formatCurrency } from "@/lib/money";
+import { formatDocumentDate } from "@/lib/dates";
+import { formatBankAccountNumber } from "@/lib/document-list-presentation";
 
 export interface DocumentRow {
   id: string;
   invoiceNumber: string;
-  documentType: { name: string };
-  contractor: { name: string; nip?: string; address?: string };
+  documentTypeId: string;
+  documentType: {
+    id: string;
+    name: string;
+    direction: "RECEIVABLE" | "PAYABLE";
+    isSystem: boolean;
+  };
+  contractorId: string;
+  contractor: {
+    id: string;
+    name: string;
+    nip: string;
+    address: string | null;
+    bankAccountNumber: string | null;
+    defaultCategoryId: string | null;
+  };
   issueDate: string;
   dueDate: string;
-  amountNet: string | number;
-  amountVat: string | number;
-  amountGross: string | number;
-  category: { name: string } | null;
+  amountNet: string;
+  amountVat: string;
+  amountGross: string;
+  categoryId: string | null;
+  category: { id: string; name: string; parentId: string | null } | null;
   source: "KSEF" | "UPLOAD" | "MANUAL";
   status: "BUFFER" | "ACCEPTED";
   ksefNumber: string | null;
@@ -25,54 +48,130 @@ export interface DocumentRow {
   fileName: string | null;
   filePath: string | null;
   fileType: string | null;
-  xmlData: Record<string, unknown> | null;
+  xmlData: unknown | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
-function formatCurrency(val: string | number) {
-  return new Intl.NumberFormat("pl-PL", {
-    style: "currency",
-    currency: "PLN",
-  }).format(Number(val));
-}
+const badgeShape = "rounded-full border px-2.5 py-0.5 text-xs font-medium";
 
-function formatDate(val: string) {
-  return format(new Date(val), "dd.MM.yyyy", { locale: pl });
-}
-
-const sourceBadge: Record<string, { label: string; variant: "default" | "secondary" | "outline" }> = {
-  KSEF: { label: "KSeF", variant: "default" },
-  UPLOAD: { label: "Upload", variant: "secondary" },
-  MANUAL: { label: "Ręczny", variant: "outline" },
+export const sourceBadge: Record<string, { label: string; className: string }> = {
+  KSEF: {
+    label: "KSeF",
+    className: `${badgeShape} border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-300`,
+  },
+  UPLOAD: {
+    label: "Upload",
+    className: `${badgeShape} border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300`,
+  },
+  MANUAL: {
+    label: "Ręczny",
+    className: `${badgeShape} border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300`,
+  },
 };
 
 const statusBadge: Record<string, { label: string; className: string }> = {
-  BUFFER: { label: "Bufor", className: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  ACCEPTED: { label: "Zaakceptowany", className: "bg-green-100 text-green-800 border-green-300" },
+  BUFFER: { label: "Bufor", className: `${badgeShape} bg-yellow-100 text-yellow-800 border-yellow-300` },
+  ACCEPTED: { label: "Zaakceptowany", className: `${badgeShape} bg-green-100 text-green-800 border-green-300` },
 };
 
-export function getColumns(onPreview: (doc: DocumentRow) => void): ColumnDef<DocumentRow>[] {
+function SortableHeader({
+  column,
+  label,
+}: {
+  column: Column<DocumentRow, unknown>;
+  label: string;
+}) {
+  const direction = column.getIsSorted();
+  const SortIcon =
+    direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ArrowUpDown;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className="-ml-3 h-8 text-xs uppercase tracking-wider"
+      onClick={() => column.toggleSorting(direction === "asc")}
+      aria-label={`${label}. ${
+        direction === "asc"
+          ? "Sortowanie rosnące"
+          : direction === "desc"
+            ? "Sortowanie malejące"
+            : "Brak sortowania"
+      }`}
+    >
+      {label}
+      <SortIcon className="ml-1 size-3.5" aria-hidden="true" />
+    </Button>
+  );
+}
+
+export function getColumns(
+  onPreview: (doc: DocumentRow) => void,
+  onEdit: (doc: DocumentRow) => void,
+  onDelete: (doc: DocumentRow) => void
+): ColumnDef<DocumentRow>[] {
   return [
     {
       id: "actions",
-      header: "",
-      size: 40,
-      cell: ({ row }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onPreview(row.original);
-          }}
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
-      ),
+      header: () => <span className="sr-only">Akcje</span>,
+      size: 128,
+      cell: ({ row }) => {
+        const invoiceNumber = row.original.invoiceNumber;
+        return (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9 hover:text-primary"
+              aria-label={`Podgląd dokumentu ${invoiceNumber}`}
+              title="Podgląd"
+              onClick={(event) => {
+                event.stopPropagation();
+                onPreview(row.original);
+              }}
+            >
+              <Eye className="h-5 w-5" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9 hover:text-primary"
+              aria-label={`Edytuj dokument ${invoiceNumber}`}
+              title="Edytuj"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit(row.original);
+              }}
+            >
+              <Pencil className="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              aria-label={`Usuń dokument ${invoiceNumber}`}
+              title="Usuń"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(row.original);
+              }}
+            >
+              <Trash2 className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "invoiceNumber",
       header: "Numer faktury",
+      cell: ({ getValue }) => (
+        <span className="font-mono font-medium">{getValue<string>()}</span>
+      ),
       size: 160,
     },
     {
@@ -90,49 +189,47 @@ export function getColumns(onPreview: (doc: DocumentRow) => void): ColumnDef<Doc
     {
       accessorKey: "issueDate",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
-          Data wystawienia
-          <ArrowUpDown className="ml-1 h-3 w-3" />
-        </Button>
+        <SortableHeader column={column} label="Data wystawienia" />
       ),
-      cell: ({ getValue }) => formatDate(getValue<string>()),
+      cell: ({ getValue }) => formatDocumentDate(getValue<string>()),
       size: 140,
     },
     {
       accessorKey: "dueDate",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
-          Termin płatności
-          <ArrowUpDown className="ml-1 h-3 w-3" />
-        </Button>
+        <SortableHeader column={column} label="Termin płatności" />
       ),
-      cell: ({ getValue }) => formatDate(getValue<string>()),
+      cell: ({ getValue }) => formatDocumentDate(getValue<string>()),
       size: 140,
     },
     {
       accessorKey: "amountNet",
-      header: "Netto",
-      cell: ({ getValue }) => formatCurrency(getValue<string>()),
+      header: () => <div className="text-right">Netto</div>,
+      cell: ({ getValue }) => (
+        <div className="text-right font-mono tabular-nums">
+          {formatCurrency(getValue<string>())}
+        </div>
+      ),
       size: 120,
     },
     {
       accessorKey: "amountVat",
-      header: "VAT",
-      cell: ({ getValue }) => formatCurrency(getValue<string>()),
+      header: () => <div className="text-right">VAT</div>,
+      cell: ({ getValue }) => (
+        <div className="text-right font-mono tabular-nums">
+          {formatCurrency(getValue<string>())}
+        </div>
+      ),
       size: 100,
     },
     {
       accessorKey: "amountGross",
-      header: "Brutto",
-      cell: ({ getValue }) => formatCurrency(getValue<string>()),
+      header: () => <div className="text-right">Brutto</div>,
+      cell: ({ getValue }) => (
+        <div className="text-right font-mono font-semibold tabular-nums">
+          {formatCurrency(getValue<string>())}
+        </div>
+      ),
       size: 120,
     },
     {
@@ -147,7 +244,11 @@ export function getColumns(onPreview: (doc: DocumentRow) => void): ColumnDef<Doc
       cell: ({ getValue }) => {
         const src = getValue<string>();
         const badge = sourceBadge[src] || sourceBadge.MANUAL;
-        return <Badge variant={badge.variant}>{badge.label}</Badge>;
+        return (
+          <Badge variant="outline" className={badge.className}>
+            {badge.label}
+          </Badge>
+        );
       },
       size: 100,
     },
@@ -168,7 +269,7 @@ export function getColumns(onPreview: (doc: DocumentRow) => void): ColumnDef<Doc
     {
       accessorKey: "ksefNumber",
       header: "Numer KSeF",
-      cell: ({ getValue }) => getValue<string>() || "—",
+      cell: ({ getValue }) => formatBankAccountNumber(getValue<string | null>()),
       size: 180,
     },
     {

@@ -13,41 +13,30 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Eye, Check, FileX, Upload, Download } from "lucide-react";
-import { format } from "date-fns";
-import { pl } from "date-fns/locale";
+import { Eye, Check, FileX } from "lucide-react";
 import { toast } from "sonner";
 import {
   useBufferDocuments,
   useAcceptDocuments,
 } from "@/lib/hooks/use-documents";
 import { DocumentPreview } from "@/components/documents/document-preview";
-import type { DocumentRow } from "@/components/documents/document-columns";
+import { DocumentFormSheet } from "@/components/documents/document-form";
+import {
+  sourceBadge,
+  type DocumentRow,
+} from "@/components/documents/document-columns";
 import { KSeFetchPanel } from "@/components/buffer/ksef-fetch-panel";
 import { UploadPanel } from "@/components/buffer/upload-panel";
-
-function formatCurrency(val: string | number) {
-  return new Intl.NumberFormat("pl-PL", {
-    style: "currency",
-    currency: "PLN",
-  }).format(Number(val));
-}
-
-function formatDate(val: string) {
-  return format(new Date(val), "dd.MM.yyyy", { locale: pl });
-}
-
-const sourceBadge: Record<string, { label: string; variant: "default" | "secondary" | "outline" }> = {
-  KSEF: { label: "KSeF", variant: "default" },
-  UPLOAD: { label: "Upload", variant: "secondary" },
-  MANUAL: { label: "Ręczny", variant: "outline" },
-};
+import { formatCurrency } from "@/lib/money";
+import { formatDocumentDate as formatDate } from "@/lib/dates";
 
 export default function BufferPage() {
   const { data: documents, isLoading } = useBufferDocuments();
   const acceptDocs = useAcceptDocuments();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewDoc, setPreviewDoc] = useState<DocumentRow | null>(null);
+  const [editDoc, setEditDoc] = useState<DocumentRow | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
 
   const docs: DocumentRow[] = documents || [];
 
@@ -98,8 +87,8 @@ export default function BufferPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div>
-        <h1 className="text-2xl font-bold">Bufor dokumentów</h1>
+      <div className="border-b pb-5">
+        <h1 className="text-2xl font-bold tracking-tight">Bufor dokumentów</h1>
         <p className="text-sm text-muted-foreground">
           Dokumenty oczekujące na akceptację
         </p>
@@ -111,9 +100,8 @@ export default function BufferPage() {
       </div>
 
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {docs.length} dokumentów w buforze
-          {selected.size > 0 && ` · ${selected.size} zaznaczonych`}
+        <p className="text-sm text-muted-foreground" aria-live="polite">
+          {docs.length} dokumentów w buforze · Zaznaczono: {selected.size}
         </p>
         <Button
           onClick={acceptSelected}
@@ -137,13 +125,14 @@ export default function BufferPage() {
           <p className="text-sm">Pobierz faktury z KSeF lub wgraj pliki</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
-          <Table>
-            <TableHeader>
+        <div className="rounded-lg border [&_[data-slot=table-container]]:max-h-[65vh] [&_[data-slot=table-container]]:overflow-auto">
+          <Table className="min-w-[900px]" aria-label="Dokumenty w buforze">
+            <TableHeader className="sticky top-0 z-20 bg-muted/95 backdrop-blur supports-backdrop-filter:bg-muted/80 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wider">
               <TableRow>
-                <TableHead className="w-10">
+                <TableHead className="w-12">
                   <Checkbox
                     checked={allSelected}
+                    aria-label="Zaznacz wszystkie dokumenty"
                     onCheckedChange={toggleAll}
                   />
                 </TableHead>
@@ -160,22 +149,33 @@ export default function BufferPage() {
             </TableHeader>
             <TableBody>
               {docs.map((doc) => (
-                <TableRow key={doc.id}>
+                <TableRow
+                  key={doc.id}
+                  className="transition-colors even:bg-muted/50 hover:bg-muted"
+                >
                   <TableCell>
                     <Checkbox
                       checked={selected.has(doc.id)}
+                      aria-label={`Zaznacz dokument ${doc.invoiceNumber}`}
                       onCheckedChange={() => toggleOne(doc.id)}
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{doc.invoiceNumber}</TableCell>
+                  <TableCell className="font-mono font-medium">{doc.invoiceNumber}</TableCell>
                   <TableCell>{doc.documentType.name}</TableCell>
                   <TableCell>{doc.contractor.name}</TableCell>
                   <TableCell>{formatDate(doc.issueDate)}</TableCell>
                   <TableCell>{formatDate(doc.dueDate)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(doc.amountNet)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(doc.amountGross)}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">
+                    {formatCurrency(doc.amountNet)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono font-semibold tabular-nums">
+                    {formatCurrency(doc.amountGross)}
+                  </TableCell>
                   <TableCell>
-                    <Badge variant={sourceBadge[doc.source]?.variant || "outline"}>
+                    <Badge
+                      variant="outline"
+                      className={sourceBadge[doc.source]?.className}
+                    >
                       {sourceBadge[doc.source]?.label || doc.source}
                     </Badge>
                   </TableCell>
@@ -184,15 +184,19 @@ export default function BufferPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 p-0"
+                        className="h-8 w-8 p-0 hover:text-primary"
+                        aria-label={`Podgląd dokumentu ${doc.invoiceNumber}`}
+                        title="Podgląd"
                         onClick={() => setPreviewDoc(doc)}
                       >
-                        <Eye className="h-4 w-4" />
+                        <Eye className="h-5 w-5" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 p-0"
+                        className="h-8 w-8 p-0 hover:text-primary"
+                        aria-label={`Akceptuj dokument ${doc.invoiceNumber}`}
+                        title="Akceptuj"
                         onClick={() => acceptOne(doc.id)}
                         disabled={acceptDocs.isPending}
                       >
@@ -210,7 +214,20 @@ export default function BufferPage() {
       <DocumentPreview
         open={!!previewDoc}
         onClose={() => setPreviewDoc(null)}
+        onEdit={(document) => {
+          setEditDoc(document);
+          setFormOpen(true);
+        }}
         document={previewDoc}
+      />
+
+      <DocumentFormSheet
+        open={formOpen}
+        onClose={() => {
+          setFormOpen(false);
+          setEditDoc(null);
+        }}
+        editDocument={editDoc}
       />
     </div>
   );

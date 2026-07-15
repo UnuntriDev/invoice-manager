@@ -44,6 +44,7 @@ import {
   useUpdateCategory,
   useDeleteCategory,
 } from "@/lib/hooks/use-documents";
+import { categoryCreateSchema } from "@/lib/validators/schemas";
 
 interface CategoryNode {
   id: string;
@@ -194,7 +195,12 @@ export default function CategoriesPage() {
   }
 
   async function handleSave() {
-    const data = { name, parentId };
+    const validation = categoryCreateSchema.safeParse({ name, parentId });
+    if (!validation.success) {
+      toast.error(validation.error.issues[0]?.message ?? "Popraw dane kategorii");
+      return;
+    }
+    const data = validation.data;
     try {
       if (editId) {
         await updateCategory.mutateAsync({ id: editId, data });
@@ -224,9 +230,9 @@ export default function CategoriesPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between border-b pb-5">
         <div>
-          <h1 className="text-2xl font-bold">Kategorie</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Kategorie</h1>
           <p className="text-sm text-muted-foreground">
             Drzewo kategorii dokumentów
           </p>
@@ -285,6 +291,7 @@ export default function CategoriesPage() {
               <Select
                 value={parentId ?? "none"}
                 onValueChange={(v) => setParentId(v === "none" ? null : v)}
+                items={{ none: "Brak (kategoria główna)", ...Object.fromEntries(parentOptions.map((opt) => [opt.id, opt.label])) }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Brak (kategoria główna)" />

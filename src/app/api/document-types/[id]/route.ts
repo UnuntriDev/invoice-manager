@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { z } from "zod";
-
-const documentTypeUpdateSchema = z.object({
-  name: z.string().min(1, "Nazwa typu jest wymagana").max(100),
-});
+import { documentTypeUpdateSchema } from "@/lib/validators/schemas";
 
 export async function PUT(
   request: NextRequest,

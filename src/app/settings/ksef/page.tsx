@@ -27,16 +27,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Pencil, Trash2, Clock } from "lucide-react";
+import { Plus, Pencil, Trash2, Clock, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
-import { pl } from "date-fns/locale";
 import {
   useKSeFSchedules,
   useCreateSchedule,
   useUpdateSchedule,
   useDeleteSchedule,
+  useRunSchedule,
 } from "@/lib/hooks/use-documents";
+import { ksefScheduleSchema } from "@/lib/validators/schemas";
+import { CRON_TIME_ZONE } from "@/lib/cron/timezone";
 
 interface Schedule {
   id: string;
@@ -45,7 +46,23 @@ interface Schedule {
   fetchType: string;
   isActive: boolean;
   lastRunAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
 }
+
+interface RunResult {
+  status: "success" | "skipped" | "failed";
+  error?: string;
+}
+
+const scheduleDateFormatter = new Intl.DateTimeFormat("pl-PL", {
+  timeZone: CRON_TIME_ZONE,
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 const fetchTypeLabels: Record<string, string> = {
   COST: "Kosztowe",
@@ -58,6 +75,7 @@ export default function KSeFSettingsPage() {
   const createSchedule = useCreateSchedule();
   const updateSchedule = useUpdateSchedule();
   const deleteSchedule = useDeleteSchedule();
+  const runSchedule = useRunSchedule();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -85,7 +103,17 @@ export default function KSeFSettingsPage() {
   }
 
   async function handleSave() {
-    const data = { hour, minute, fetchType, isActive };
+    const validation = ksefScheduleSchema.safeParse({
+      hour,
+      minute,
+      fetchType,
+      isActive,
+    });
+    if (!validation.success) {
+      toast.error(validation.error.issues[0]?.message ?? "Popraw dane harmonogramu");
+      return;
+    }
+    const data = validation.data;
     try {
       if (editId) {
         await updateSchedule.mutateAsync({ id: editId, data });
@@ -120,13 +148,28 @@ export default function KSeFSettingsPage() {
     }
   }
 
+  async function handleRun(id: string) {
+    try {
+      const result = (await runSchedule.mutateAsync(id)) as RunResult;
+      if (result.status === "success") {
+        toast.success("Harmonogram wykonany poprawnie");
+      } else if (result.status === "skipped") {
+        toast.info("Harmonogram jest już wykonywany lub jest nieaktywny");
+      } else {
+        toast.error(result.error || "Wykonanie harmonogramu nie powiodło się");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Błąd wykonania");
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between border-b pb-5">
         <div>
-          <h1 className="text-2xl font-bold">Harmonogram KSeF</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Harmonogram KSeF</h1>
           <p className="text-sm text-muted-foreground">
-            Konfiguracja automatycznego pobierania faktur
+            Konfiguracja automatycznego pobierania faktur — strefa {CRON_TIME_ZONE}
           </p>
         </div>
         <Button onClick={openNew}>
@@ -156,7 +199,8 @@ export default function KSeFSettingsPage() {
                 <TableHead>Typ faktur</TableHead>
                 <TableHead>Aktywny</TableHead>
                 <TableHead>Ostatnie uruchomienie</TableHead>
-                <TableHead className="w-24">Akcje</TableHead>
+                <TableHead>Ostatni błąd</TableHead>
+                <TableHead className="w-32">Akcje</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -174,11 +218,33 @@ export default function KSeFSettingsPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {s.lastRunAt
-                      ? format(new Date(s.lastRunAt), "dd.MM.yyyy HH:mm", { locale: pl })
+                      ? scheduleDateFormatter.format(new Date(s.lastRunAt))
                       : "—"}
+                  </TableCell>
+                  <TableCell className="max-w-72 text-sm text-destructive">
+                    {s.lastError ? (
+                      <span title={s.lastError}>
+                        {s.lastError}
+                        {s.lastErrorAt
+                          ? ` (${scheduleDateFormatter.format(new Date(s.lastErrorAt))})`
+                          : ""}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        aria-label="Uruchom ponownie"
+                        disabled={!s.isActive || runSchedule.isPending}
+                        onClick={() => handleRun(s.id)}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"

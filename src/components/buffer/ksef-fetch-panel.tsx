@@ -20,6 +20,7 @@ import {
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useKSeFetch } from "@/lib/hooks/use-documents";
+import { ksefFetchSchema } from "@/lib/validators/schemas";
 
 export function KSeFetchPanel() {
   const [open, setOpen] = useState(false);
@@ -33,12 +34,17 @@ export function KSeFetchPanel() {
   const fetchKSeF = useKSeFetch();
 
   async function handleFetch() {
+    const validation = ksefFetchSchema.safeParse({ dateFrom, dateTo, type });
+    if (!validation.success) {
+      toast.error(validation.error.issues[0]?.message ?? "Popraw zakres pobierania");
+      return;
+    }
+
     try {
       const result = await fetchKSeF.mutateAsync({ dateFrom, dateTo, type });
       const parts: string[] = [];
       if (result.imported > 0) parts.push(`Pobrano ${result.imported} faktur do bufora`);
       if (result.skipped > 0) parts.push(`Pominięto ${result.skipped} duplikatów`);
-      if (result.errors?.length > 0) parts.push(`${result.errors.length} błędów`);
       toast.success(parts.join(". ") || "Brak nowych faktur");
       setOpen(false);
     } catch (error) {

@@ -1,35 +1,67 @@
 import { z } from "zod";
+import { validateBankAccount } from "@/lib/validators/iban";
+import { validateNip } from "@/lib/validators/nip";
+import {
+  isGrossEqualToNetAndVat,
+  normalizeMoney,
+  parseMoney,
+} from "@/lib/money";
+
+const cuidSchema = z.string().cuid("Nieprawidłowy identyfikator");
+
+export const nipSchema = z
+  .string()
+  .transform((value) => value.replace(/[\s-]/g, ""))
+  .refine((value) => validateNip(value).valid, {
+    message: "Nieprawidłowy NIP",
+  });
+
+export const bankAccountSchema = z
+  .string()
+  .trim()
+  .refine((value) => value === "" || validateBankAccount(value).valid, {
+    message: "Nieprawidłowy numer IBAN/NRB",
+  })
+  .optional()
+  .nullable()
+  .transform((value) =>
+    (value ?? "").replace(/[\s-]/g, "").replace(/^PL/i, "")
+  );
+
+export const moneySchema = z
+  .string({ error: "Kwota jest wymagana" })
+  .trim()
+  .min(1, "Kwota jest wymagana")
+  .superRefine((value, ctx) => {
+    try {
+      parseMoney(value);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        message: error instanceof Error ? error.message : "Nieprawidłowa kwota",
+      });
+    }
+  })
+  .transform(normalizeMoney);
+
+export const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Data musi mieć format YYYY-MM-DD")
+  .refine((value) => {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "Nieprawidłowa data");
 
 // ===================================================
 // KONTRAHENT
 // ===================================================
 
 export const contractorCreateSchema = z.object({
-  name: z.string().min(1, "Nazwa kontrahenta jest wymagana").max(255),
-  nip: z
-    .string()
-    .regex(/^\d{10}$/, "NIP musi składać się z 10 cyfr")
-    .refine((nip) => {
-      const weights = [6, 5, 7, 2, 3, 4, 5, 6, 7];
-      const digits = nip.split("").map(Number);
-      const sum = weights.reduce((acc, w, i) => acc + w * digits[i], 0);
-      const remainder = sum % 11;
-      return remainder !== 10 && remainder === digits[9];
-    }, "Nieprawidłowy NIP — błędna cyfra kontrolna"),
+  name: z.string().trim().min(1, "Nazwa kontrahenta jest wymagana").max(255),
+  nip: nipSchema,
   address: z.string().max(500).optional().nullable(),
-  bankAccountNumber: z
-    .string()
-    .optional()
-    .nullable()
-    .refine(
-      (val) => {
-        if (!val) return true;
-        const cleaned = val.replace(/[\s-]/g, "").replace(/^PL/i, "");
-        return /^\d{26}$/.test(cleaned);
-      },
-      "Numer rachunku musi mieć 26 cyfr (NRB) lub format IBAN PL"
-    ),
-  defaultCategoryId: z.string().cuid().optional().nullable(),
+  bankAccountNumber: bankAccountSchema,
+  defaultCategoryId: cuidSchema.optional().nullable(),
 });
 
 export const contractorUpdateSchema = contractorCreateSchema.partial();
@@ -39,10 +71,14 @@ export const contractorUpdateSchema = contractorCreateSchema.partial();
 // ===================================================
 
 export const documentTypeCreateSchema = z.object({
-  name: z.string().min(1, "Nazwa typu jest wymagana").max(100),
+  name: z.string().trim().min(1, "Nazwa typu jest wymagana").max(100),
   direction: z.enum(["RECEIVABLE", "PAYABLE"], {
     error: "Kierunek: RECEIVABLE (należność) lub PAYABLE (zobowiązanie)",
   }),
+});
+
+export const documentTypeUpdateSchema = documentTypeCreateSchema.pick({
+  name: true,
 });
 
 // ===================================================
@@ -50,8 +86,8 @@ export const documentTypeCreateSchema = z.object({
 // ===================================================
 
 export const categoryCreateSchema = z.object({
-  name: z.string().min(1, "Nazwa kategorii jest wymagana").max(100),
-  parentId: z.string().cuid().optional().nullable(),
+  name: z.string().trim().min(1, "Nazwa kategorii jest wymagana").max(100),
+  parentId: cuidSchema.optional().nullable(),
 });
 
 export const categoryUpdateSchema = categoryCreateSchema.partial();
@@ -60,61 +96,110 @@ export const categoryUpdateSchema = categoryCreateSchema.partial();
 // DOKUMENT (FAKTURA)
 // ===================================================
 
+const documentFormFields = {
+  invoiceNumber: z.string().trim().min(1, "Numer faktury jest wymagany").max(50),
+  documentTypeId: cuidSchema,
+  contractorId: cuidSchema,
+  issueDate: z.string(),
+  dueDate: z.string(),
+  amountNet: moneySchema,
+  amountVat: moneySchema,
+  amountGross: moneySchema,
+  bankAccountNumber: bankAccountSchema,
+  categoryId: cuidSchema.optional().nullable(),
+};
+
+function validateDocumentValues(
+  data: {
+    issueDate: string;
+    dueDate: string;
+    amountNet: string;
+    amountVat: string;
+    amountGross: string;
+  },
+  ctx: z.RefinementCtx
+) {
+  const issueDate = isoDateSchema.safeParse(data.issueDate);
+  const dueDate = isoDateSchema.safeParse(data.dueDate);
+
+  if (!issueDate.success) {
+    ctx.addIssue({ code: "custom", path: ["issueDate"], message: "Nieprawidłowa data wystawienia" });
+  }
+  if (!dueDate.success) {
+    ctx.addIssue({ code: "custom", path: ["dueDate"], message: "Nieprawidłowy termin płatności" });
+  }
+  if (issueDate.success && dueDate.success && data.dueDate < data.issueDate) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["dueDate"],
+      message: "Termin płatności nie może być wcześniejszy niż data wystawienia",
+    });
+  }
+  if (!isGrossEqualToNetAndVat(data.amountNet, data.amountVat, data.amountGross)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["amountGross"],
+      message: "Kwota brutto musi być równa sumie netto + VAT",
+    });
+  }
+}
+
+export const documentFormSchema = z
+  .object(documentFormFields)
+  .superRefine(validateDocumentValues);
+
 export const documentCreateSchema = z
   .object({
-    invoiceNumber: z.string().min(1, "Numer faktury jest wymagany").max(50),
-    documentTypeId: z.string().cuid("Nieprawidłowy typ dokumentu"),
-    contractorId: z.string().cuid("Nieprawidłowy kontrahent"),
-    issueDate: z.coerce.date({ error: "Nieprawidłowa data wystawienia" }),
-    dueDate: z.coerce.date({ error: "Nieprawidłowy termin płatności" }),
-    amountNet: z.coerce
-      .number()
-      .min(0, "Kwota netto nie może być ujemna")
-      .multipleOf(0.01, "Maksymalnie 2 miejsca dziesiętne"),
-    amountVat: z.coerce
-      .number()
-      .min(0, "Kwota VAT nie może być ujemna")
-      .multipleOf(0.01, "Maksymalnie 2 miejsca dziesiętne"),
-    amountGross: z.coerce
-      .number()
-      .min(0, "Kwota brutto nie może być ujemna")
-      .multipleOf(0.01, "Maksymalnie 2 miejsca dziesiętne"),
-    bankAccountNumber: z.string().optional().nullable(),
-    categoryId: z.string().cuid().optional().nullable(),
+    ...documentFormFields,
     source: z.enum(["KSEF", "UPLOAD", "MANUAL"]).default("MANUAL"),
-    ksefNumber: z.string().optional().nullable(),
+    ksefNumber: z.string().trim().min(1).max(128).optional().nullable(),
     status: z.enum(["BUFFER", "ACCEPTED"]).default("BUFFER"),
   })
-  .refine(
-    (data) => data.dueDate >= data.issueDate,
-    {
-      message: "Termin płatności nie może być wcześniejszy niż data wystawienia",
-      path: ["dueDate"],
-    }
-  )
-  .refine(
-    (data) => {
-      const expectedGross = Math.round((data.amountNet + data.amountVat) * 100) / 100;
-      return Math.abs(data.amountGross - expectedGross) < 0.02;
-    },
-    {
-      message: "Kwota brutto musi być równa sumie netto + VAT",
-      path: ["amountGross"],
-    }
-  );
+  .superRefine(validateDocumentValues);
 
-export const documentUpdateSchema = z.object({
-  invoiceNumber: z.string().min(1).max(50).optional(),
-  documentTypeId: z.string().cuid().optional(),
-  contractorId: z.string().cuid().optional(),
-  issueDate: z.coerce.date().optional(),
-  dueDate: z.coerce.date().optional(),
-  amountNet: z.coerce.number().min(0).multipleOf(0.01).optional(),
-  amountVat: z.coerce.number().min(0).multipleOf(0.01).optional(),
-  amountGross: z.coerce.number().min(0).multipleOf(0.01).optional(),
-  bankAccountNumber: z.string().optional().nullable(),
-  categoryId: z.string().cuid().optional().nullable(),
-});
+// PUT dokumentu wymaga pełnego zestawu pól edytowalnych, dzięki czemu reguły
+// między polami są identyczne podczas tworzenia i edycji.
+export const documentUpdateSchema = documentFormSchema;
+
+export const pdfUploadSchema = documentFormSchema;
+
+export const documentListQuerySchema = z
+  .object({
+    documentTypeId: cuidSchema.optional(),
+    contractorId: cuidSchema.optional(),
+    categoryId: cuidSchema.optional(),
+    source: z.enum(["KSEF", "UPLOAD", "MANUAL"]).optional(),
+    dateFrom: isoDateSchema.optional(),
+    dateTo: isoDateSchema.optional(),
+    dueDateFrom: isoDateSchema.optional(),
+    dueDateTo: isoDateSchema.optional(),
+    sortBy: z.enum(["issueDate", "dueDate"]).default("issueDate"),
+    sortOrder: z.enum(["asc", "desc"]).default("desc"),
+    search: z.string().trim().max(100).optional(),
+    cursor: cuidSchema.optional(),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.dateFrom && data.dateTo && data.dateTo < data.dateFrom) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["dateTo"],
+        message: "Data do nie może być wcześniejsza niż data od",
+      });
+    }
+    if (
+      data.dueDateFrom &&
+      data.dueDateTo &&
+      data.dueDateTo < data.dueDateFrom
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["dueDateTo"],
+        message: "Termin do nie może być wcześniejszy niż termin od",
+      });
+    }
+  });
 
 // ===================================================
 // KSeF POBIERANIE
@@ -122,8 +207,12 @@ export const documentUpdateSchema = z.object({
 
 export const ksefFetchSchema = z
   .object({
-    dateFrom: z.coerce.date({ error: "Data od jest wymagana" }),
-    dateTo: z.coerce.date({ error: "Data do jest wymagana" }),
+    dateFrom: isoDateSchema.transform(
+      (value) => new Date(`${value}T00:00:00.000Z`)
+    ),
+    dateTo: isoDateSchema.transform(
+      (value) => new Date(`${value}T00:00:00.000Z`)
+    ),
     type: z.enum(["COST", "SALES"], {
       error: "Typ: COST (kosztowe) lub SALES (sprzedażowe)",
     }),
@@ -132,6 +221,64 @@ export const ksefFetchSchema = z
     message: "Data do nie może być wcześniejsza niż data od",
     path: ["dateTo"],
   });
+
+const ksefPartySchema = z.object({
+  nip: z
+    .string()
+    .trim()
+    .regex(/^\d{10}$/, "NIP kontrahenta musi składać się z 10 cyfr"),
+  name: z.string().trim().min(1, "Nazwa kontrahenta jest wymagana").max(255),
+  address: z.string().max(500).optional(),
+  countryCode: z.string().length(2).optional(),
+});
+
+const ksefLineItemSchema = z.object({
+  lineNumber: z.number().int().positive(),
+  description: z.string().min(1),
+  unit: z.string().min(1),
+  quantity: z.number().positive(),
+  unitPriceNet: moneySchema,
+  amountNet: moneySchema,
+  vatRate: z.number().nonnegative(),
+});
+
+export const ksefInvoiceSchema = z
+  .object({
+    ksefNumber: z.string().trim().min(1, "Numer KSeF jest wymagany").max(128),
+    invoiceNumber: z.string().trim().min(1, "Numer faktury jest wymagany").max(50),
+    issueDate: isoDateSchema,
+    saleDate: isoDateSchema,
+    dueDate: isoDateSchema,
+    currency: z.string().length(3),
+    seller: ksefPartySchema,
+    buyer: ksefPartySchema,
+    lineItems: z.array(ksefLineItemSchema),
+    amountNet: moneySchema,
+    amountVat: moneySchema,
+    amountGross: moneySchema,
+    bankAccountNumber: bankAccountSchema.optional(),
+    xmlContent: z.string().min(1, "Treść XML jest wymagana"),
+  })
+  .refine((invoice) => invoice.dueDate >= invoice.issueDate, {
+    message: "Termin płatności nie może być wcześniejszy niż data wystawienia",
+    path: ["dueDate"],
+  })
+  .refine(
+    (invoice) =>
+      isGrossEqualToNetAndVat(
+        invoice.amountNet,
+        invoice.amountVat,
+        invoice.amountGross
+      ),
+    {
+      message: "Kwota brutto musi być równa sumie netto i VAT",
+      path: ["amountGross"],
+    }
+  );
+
+export const ksefInvoiceBatchSchema = z
+  .array(ksefInvoiceSchema)
+  .max(1_000, "Batch KSeF może zawierać maksymalnie 1000 dokumentów");
 
 // ===================================================
 // AKCEPTACJA Z BUFORA
@@ -175,6 +322,7 @@ export const columnConfigUpdateSchema = z.object({
 export type ContractorCreate = z.infer<typeof contractorCreateSchema>;
 export type DocumentCreate = z.infer<typeof documentCreateSchema>;
 export type DocumentUpdate = z.infer<typeof documentUpdateSchema>;
+export type DocumentListQuery = z.infer<typeof documentListQuerySchema>;
 export type CategoryCreate = z.infer<typeof categoryCreateSchema>;
 export type KSeFFetchParams = z.infer<typeof ksefFetchSchema>;
 export type AcceptDocuments = z.infer<typeof acceptDocumentsSchema>;

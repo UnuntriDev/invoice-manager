@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import * as documentService from "@/lib/services/document.service";
+import { readAttachment } from "@/lib/storage/attachment-storage";
+import { logMissingAttachment } from "@/lib/storage/attachment-logger";
 
 export async function GET(
   _request: NextRequest,
@@ -18,16 +19,25 @@ export async function GET(
       return NextResponse.json({ error: "Dokument nie ma załączonego pliku" }, { status: 404 });
     }
 
-    const fileBuffer = await fs.readFile(document.filePath);
+    const fileBuffer = await readAttachment(document.filePath);
+    if (!fileBuffer) {
+      logMissingAttachment(id, document.filePath);
+      return NextResponse.json(
+        { error: "Plik załącznika nie istnieje" },
+        { status: 404 }
+      );
+    }
     const contentType = document.fileType || "application/octet-stream";
+    const fileName = (document.fileName || "file").replace(/["\r\n]/g, "_");
 
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       headers: {
         "Content-Type": contentType,
-        "Content-Disposition": `inline; filename="${document.fileName || "file"}"`,
+        "Content-Disposition": `inline; filename="${fileName}"`,
       },
     });
-  } catch {
+  } catch (error) {
+    console.error("[attachment-read-failed]", error);
     return NextResponse.json({ error: "Wystąpił błąd serwera" }, { status: 500 });
   }
 }

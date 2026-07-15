@@ -17,7 +17,10 @@ export async function getContractor(id: string) {
 
 export async function createContractor(data: ContractorCreate) {
   return prisma.contractor.create({
-    data,
+    data: {
+      ...data,
+      bankAccountNumber: data.bankAccountNumber || null,
+    },
     include: { defaultCategory: true },
   });
 }
@@ -25,7 +28,13 @@ export async function createContractor(data: ContractorCreate) {
 export async function updateContractor(id: string, data: Partial<ContractorCreate>) {
   return prisma.contractor.update({
     where: { id },
-    data,
+    data: {
+      ...data,
+      bankAccountNumber:
+        data.bankAccountNumber === undefined
+          ? undefined
+          : data.bankAccountNumber || null,
+    },
     include: { defaultCategory: true },
   });
 }

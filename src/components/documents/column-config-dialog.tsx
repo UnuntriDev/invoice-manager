@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Settings2, GripVertical } from "lucide-react";
 import { useColumnConfig, useUpdateColumnConfig } from "@/lib/hooks/use-documents";
 import { COLUMN_LABELS } from "./document-columns";
@@ -37,6 +38,37 @@ interface ColumnItem {
   position: number;
 }
 
+const DEFAULT_VISIBLE_COLUMNS = new Set([
+  "invoiceNumber",
+  "documentType",
+  "contractor",
+  "issueDate",
+  "dueDate",
+  "amountNet",
+  "amountVat",
+  "amountGross",
+  "category",
+  "source",
+]);
+
+function getDefaultColumnConfig(): ColumnItem[] {
+  return Object.keys(COLUMN_LABELS).map((columnKey, position) => ({
+    columnKey,
+    position,
+    isVisible: DEFAULT_VISIBLE_COLUMNS.has(columnKey),
+  }));
+}
+
+function normalizeColumnConfig(config: ColumnItem[] | undefined): ColumnItem[] {
+  return [...(config ?? [])]
+    .sort((a, b) => a.position - b.position)
+    .map((column) => ({
+      columnKey: column.columnKey,
+      isVisible: column.isVisible,
+      position: column.position,
+    }));
+}
+
 function SortableItem({
   item,
   onToggle,
@@ -59,42 +91,32 @@ function SortableItem({
       className="flex items-center gap-3 rounded-md border px-3 py-2"
     >
       <button
-        className="cursor-grab touch-none text-muted-foreground hover:text-foreground"
+        type="button"
+        className="flex size-9 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Zmień pozycję kolumny ${COLUMN_LABELS[item.columnKey] || item.columnKey}`}
         {...attributes}
         {...listeners}
       >
-        <GripVertical className="h-4 w-4" />
+        <GripVertical className="size-4" aria-hidden="true" />
       </button>
       <Checkbox
+        id={`column-visible-${item.columnKey}`}
         checked={item.isVisible}
         onCheckedChange={() => onToggle(item.columnKey)}
       />
-      <span className="text-sm">
+      <Label htmlFor={`column-visible-${item.columnKey}`} className="flex-1 cursor-pointer">
         {COLUMN_LABELS[item.columnKey] || item.columnKey}
-      </span>
+      </Label>
     </div>
   );
 }
 
 export function ColumnConfigDialog() {
-  const { data: serverConfig } = useColumnConfig();
+  const { data: serverConfig, isLoading, isError } = useColumnConfig();
   const updateConfig = useUpdateColumnConfig();
-  const [items, setItems] = useState<ColumnItem[]>([]);
+  const [draftItems, setDraftItems] = useState<ColumnItem[] | null>(null);
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (serverConfig) {
-      setItems(
-        [...serverConfig]
-          .sort((a: ColumnItem, b: ColumnItem) => a.position - b.position)
-          .map((c: ColumnItem) => ({
-            columnKey: c.columnKey,
-            isVisible: c.isVisible,
-            position: c.position,
-          }))
-      );
-    }
-  }, [serverConfig]);
+  const items = draftItems ?? normalizeColumnConfig(serverConfig);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -107,7 +129,8 @@ export function ColumnConfigDialog() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    setItems((prev) => {
+    setDraftItems((draft) => {
+      const prev = draft ?? normalizeColumnConfig(serverConfig);
       const oldIndex = prev.findIndex((i) => i.columnKey === active.id);
       const newIndex = prev.findIndex((i) => i.columnKey === over.id);
       return arrayMove(prev, oldIndex, newIndex);
@@ -115,9 +138,31 @@ export function ColumnConfigDialog() {
   }
 
   function handleToggle(key: string) {
-    setItems((prev) =>
-      prev.map((i) => (i.columnKey === key ? { ...i, isVisible: !i.isVisible } : i))
-    );
+    setDraftItems((draft) => {
+      const current = draft ?? normalizeColumnConfig(serverConfig);
+      const selected = current.find((item) => item.columnKey === key);
+      if (
+        selected?.isVisible &&
+        current.filter((item) => item.isVisible).length === 1
+      ) {
+        toast.warning("Co najmniej jedna kolumna musi pozostać widoczna");
+        return current;
+      }
+      return current.map((item) =>
+        item.columnKey === key
+          ? { ...item, isVisible: !item.isVisible }
+          : item
+      );
+    });
+  }
+
+  function handleReset() {
+    setDraftItems(getDefaultColumnConfig());
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) setDraftItems(null);
+    setOpen(nextOpen);
   }
 
   async function handleSave() {
@@ -138,16 +183,26 @@ export function ColumnConfigDialog() {
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button variant="outline" size="sm" onClick={() => handleOpenChange(true)}>
         <Settings2 className="mr-2 h-4 w-4" />
         Kolumny
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Konfiguracja kolumn</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2">
+        {isLoading && (
+          <p className="py-8 text-center text-sm text-muted-foreground" role="status">
+            Ładowanie konfiguracji…
+          </p>
+        )}
+        {isError && (
+          <p className="py-8 text-center text-sm text-destructive" role="alert">
+            Nie udało się załadować konfiguracji kolumn.
+          </p>
+        )}
+        {!isLoading && !isError && <div className="space-y-2">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -166,14 +221,22 @@ export function ColumnConfigDialog() {
               ))}
             </SortableContext>
           </DndContext>
-        </div>
-        <div className="flex justify-end gap-2 pt-4">
-          <Button variant="outline" onClick={() => setOpen(false)}>
-            Anuluj
+        </div>}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-4">
+          <Button variant="ghost" onClick={handleReset} disabled={isLoading || isError}>
+            Przywróć domyślne
           </Button>
-          <Button onClick={handleSave} disabled={updateConfig.isPending}>
-            Zapisz
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Anuluj
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={updateConfig.isPending || isLoading || isError || items.length === 0}
+            >
+              {updateConfig.isPending ? "Zapisywanie…" : "Zapisz"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

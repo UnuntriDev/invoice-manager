@@ -95,6 +95,7 @@ model Document {
   categoryId        String?
   category          Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   source            DocumentSource
+  // Stabilny klucz idempotentności dla dokumentów importowanych z KSeF.
   ksefNumber        String?        @unique
   status            DocumentStatus @default(BUFFER)
   fileName          String?
@@ -125,8 +126,14 @@ model KSeFSchedule {
   isActive  Boolean   @default(true)
   fetchType String    @default("BOTH") // COST / SALES / BOTH
   lastRunAt DateTime?
+  lastError String?
+  lastErrorAt DateTime?
+  lockToken String?
+  lockedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  @@index([isActive, hour, minute])
 }
 
 // ============================================================

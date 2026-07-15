@@ -1,7 +1,7 @@
 "use client";
 
-import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,9 @@ import {
 } from "@/lib/hooks/use-documents";
 import { toast } from "sonner";
 import type { DocumentRow } from "./document-columns";
+import { documentFormSchema, type DocumentUpdate } from "@/lib/validators/schemas";
+import type { z } from "zod";
+import { addMoney } from "@/lib/money";
 
 interface CategoryNode {
   id: string;
@@ -47,20 +50,7 @@ function flattenCategories(cats: CategoryNode[], depth = 0): { id: string; name:
   return result;
 }
 
-const formSchema = z.object({
-  invoiceNumber: z.string().min(1, "Numer faktury jest wymagany"),
-  documentTypeId: z.string().min(1, "Typ dokumentu jest wymagany"),
-  contractorId: z.string().min(1, "Kontrahent jest wymagany"),
-  issueDate: z.string().min(1, "Data wystawienia jest wymagana"),
-  dueDate: z.string().min(1, "Termin płatności jest wymagany"),
-  amountNet: z.coerce.number().min(0, "Kwota netto nie może być ujemna"),
-  amountVat: z.coerce.number().min(0, "Kwota VAT nie może być ujemna"),
-  amountGross: z.coerce.number().min(0, "Kwota brutto nie może być ujemna"),
-  bankAccountNumber: z.string().optional(),
-  categoryId: z.string().optional(),
-});
-
-type FormValues = z.infer<typeof formSchema>;
+type FormValues = z.input<typeof documentFormSchema>;
 
 interface Props {
   open: boolean;
@@ -81,18 +71,34 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     reset,
     formState: { errors },
-  } = useForm<FormValues>();
+  } = useForm<FormValues, unknown, DocumentUpdate>({
+    resolver: zodResolver(documentFormSchema),
+  });
 
-  const amountNet = watch("amountNet");
-  const amountVat = watch("amountVat");
+  const [amountNet, amountVat, documentTypeId, contractorId, categoryId] =
+    useWatch({
+      control,
+      name: [
+        "amountNet",
+        "amountVat",
+        "documentTypeId",
+        "contractorId",
+        "categoryId",
+      ],
+    });
 
   useEffect(() => {
-    if (amountNet !== undefined && amountVat !== undefined) {
-      const gross = Math.round((Number(amountNet) + Number(amountVat)) * 100) / 100;
-      setValue("amountGross", gross);
+    if (amountNet && amountVat) {
+      try {
+        setValue("amountGross", addMoney(amountNet, amountVat), {
+          shouldValidate: true,
+        });
+      } catch {
+        // Resolver pokaże błąd przy polu źródłowym.
+      }
     }
   }, [amountNet, amountVat, setValue]);
 
@@ -105,11 +111,11 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
         contractorId: (raw.contractorId as string) || "",
         issueDate: editDocument.issueDate?.split("T")[0] || "",
         dueDate: editDocument.dueDate?.split("T")[0] || "",
-        amountNet: Number(editDocument.amountNet),
-        amountVat: Number(editDocument.amountVat),
-        amountGross: Number(editDocument.amountGross),
+        amountNet: String(editDocument.amountNet),
+        amountVat: String(editDocument.amountVat),
+        amountGross: String(editDocument.amountGross),
         bankAccountNumber: editDocument.bankAccountNumber || "",
-        categoryId: (raw.categoryId as string) || "",
+        categoryId: (raw.categoryId as string) || null,
       });
     } else {
       reset({
@@ -118,29 +124,23 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
         contractorId: "",
         issueDate: new Date().toISOString().split("T")[0],
         dueDate: "",
-        amountNet: 0,
-        amountVat: 0,
-        amountGross: 0,
+        amountNet: "0.00",
+        amountVat: "0.00",
+        amountGross: "0.00",
         bankAccountNumber: "",
-        categoryId: "",
+        categoryId: null,
       });
     }
   }, [editDocument, reset]);
 
-  async function onSubmit(values: FormValues) {
-    const parsed = formSchema.safeParse(values);
-    if (!parsed.success) {
-      toast.error("Popraw błędy w formularzu");
-      return;
-    }
-
+  async function onSubmit(values: DocumentUpdate) {
     try {
       if (editDocument) {
-        await updateDoc.mutateAsync({ id: editDocument.id, data: parsed.data });
+        await updateDoc.mutateAsync({ id: editDocument.id, data: values });
         toast.success("Dokument zaktualizowany");
       } else {
         await createDoc.mutateAsync({
-          ...parsed.data,
+          ...values,
           source: "MANUAL",
           status: "ACCEPTED",
         });
@@ -170,8 +170,9 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
           <div className="space-y-1">
             <Label>Typ dokumentu</Label>
             <Select
-              value={watch("documentTypeId") || null}
-              onValueChange={(v) => setValue("documentTypeId", v ?? "")}
+              value={documentTypeId || null}
+              onValueChange={(v) => setValue("documentTypeId", v ?? "", { shouldValidate: true })}
+              items={Object.fromEntries(docTypes?.map((t: { id: string; name: string }) => [t.id, t.name]) ?? [])}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Wybierz typ" />
@@ -190,8 +191,9 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
           <div className="space-y-1">
             <Label>Kontrahent</Label>
             <Select
-              value={watch("contractorId") || null}
-              onValueChange={(v) => setValue("contractorId", v ?? "")}
+              value={contractorId || null}
+              onValueChange={(v) => setValue("contractorId", v ?? "", { shouldValidate: true })}
+              items={Object.fromEntries(contractors?.map((c: { id: string; name: string }) => [c.id, c.name]) ?? [])}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Wybierz kontrahenta" />
@@ -259,8 +261,9 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
           <div className="space-y-1">
             <Label>Kategoria</Label>
             <Select
-              value={watch("categoryId") || null}
-              onValueChange={(v) => setValue("categoryId", v === "__none__" ? "" : v ?? "")}
+              value={categoryId || null}
+              onValueChange={(v) => setValue("categoryId", v === "__none__" ? null : v, { shouldValidate: true })}
+              items={{ __none__: "Brak kategorii", ...Object.fromEntries(flatCats.map((c) => [c.id, "  ".repeat(c.depth) + c.name])) }}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Brak kategorii" />

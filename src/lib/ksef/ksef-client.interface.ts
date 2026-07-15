@@ -3,8 +3,8 @@ export interface KSeFInvoiceLineItem {
   description: string;
   unit: string;
   quantity: number;
-  unitPriceNet: number;
-  amountNet: number;
+  unitPriceNet: string;
+  amountNet: string;
   vatRate: number;
 }
 
@@ -25,9 +25,9 @@ export interface KSeFInvoice {
   seller: KSeFParty;
   buyer: KSeFParty;
   lineItems: KSeFInvoiceLineItem[];
-  amountNet: number;
-  amountVat: number;
-  amountGross: number;
+  amountNet: string;
+  amountVat: string;
+  amountGross: string;
   bankAccountNumber?: string;
   xmlContent: string;
 }

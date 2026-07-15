@@ -1,15 +1,29 @@
 "use client";
 
+import dynamic from "next/dynamic";
+import {
+  Copy,
+  Download,
+  Ellipsis,
+  FileText,
+  Pencil,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -18,10 +32,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { format } from "date-fns";
-import { pl } from "date-fns/locale";
-import dynamic from "next/dynamic";
-import { XMLParser } from "fast-xml-parser";
+import { formatDocumentDate, formatDocumentDateTime } from "@/lib/dates";
+import { parseKSeFXml, type ParsedInvoice } from "@/lib/ksef/xml-parser";
+import { formatCurrency } from "@/lib/money";
 import type { DocumentRow } from "./document-columns";
 
 const PdfViewerLazy = dynamic(() => import("./pdf-viewer"), { ssr: false });
@@ -29,18 +42,8 @@ const PdfViewerLazy = dynamic(() => import("./pdf-viewer"), { ssr: false });
 interface Props {
   open: boolean;
   onClose: () => void;
+  onEdit: (document: DocumentRow) => void;
   document: DocumentRow | null;
-}
-
-function formatCurrency(val: string | number) {
-  return new Intl.NumberFormat("pl-PL", {
-    style: "currency",
-    currency: "PLN",
-  }).format(Number(val));
-}
-
-function formatDate(val: string) {
-  return format(new Date(val), "dd.MM.yyyy", { locale: pl });
 }
 
 const sourceBadge: Record<
@@ -55,431 +58,375 @@ const sourceBadge: Record<
 const statusBadge: Record<string, { label: string; className: string }> = {
   BUFFER: {
     label: "Bufor",
-    className: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    className:
+      "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200",
   },
   ACCEPTED: {
     label: "Zaakceptowany",
-    className: "bg-green-100 text-green-800 border-green-300",
+    className:
+      "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
   },
 };
 
-function PreviewHeader({ doc }: { doc: DocumentRow }) {
-  const src = sourceBadge[doc.source] || sourceBadge.MANUAL;
-  const st = statusBadge[doc.status] || statusBadge.BUFFER;
+type XmlInvoiceData = Partial<ParsedInvoice>;
 
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Badge variant={src.variant}>{src.label}</Badge>
-        <Badge variant="outline" className={st.className}>
-          {st.label}
-        </Badge>
-      </div>
-      <div>
-        <h3 className="text-lg font-semibold">{doc.invoiceNumber}</h3>
-        <p className="text-sm text-muted-foreground">
-          {doc.documentType.name}
-        </p>
-      </div>
-    </div>
-  );
-}
+function getXmlData(doc: DocumentRow): XmlInvoiceData | null {
+  if (!doc.xmlData) return null;
 
+  const xmlData = doc.xmlData as { xmlContent?: string } & XmlInvoiceData;
+  if (!xmlData.xmlContent) return xmlData;
 
-interface XmlInvoiceData {
-  seller?: { nip?: string; name?: string; address?: string };
-  buyer?: { nip?: string; name?: string; address?: string };
-  invoiceNumber?: string;
-  issueDate?: string;
-  saleDate?: string;
-  dueDate?: string;
-  currency?: string;
-  lineItems?: Array<{
-    lineNumber?: number;
-    description?: string;
-    unit?: string;
-    quantity?: number;
-    unitPriceNet?: number;
-    amountNet?: number;
-    vatRate?: number;
-  }>;
-  amountNet?: number;
-  amountVat?: number;
-  amountGross?: number;
-  bankAccountNumber?: string;
-}
-
-const xmlParserOptions = {
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  removeNSPrefix: true,
-  parseTagValue: true,
-  trimValues: true,
-  numberParseOptions: { leadingZeros: false, hex: false, eNotation: false, skipLike: /^\d{10,}$/ },
-  isArray: (name: string) => name === "FaWiersz",
-};
-
-function parseXmlContent(xmlString: string): XmlInvoiceData {
-  const parser = new XMLParser(xmlParserOptions);
-  const parsed = parser.parse(xmlString);
-  const faktura = parsed.Faktura;
-  if (!faktura) return {};
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const extractParty = (podmiot: any) => {
-    const dane = podmiot?.DaneIdentyfikacyjne || {};
-    const adres = podmiot?.Adres || {};
-    const nip = String(dane.NIP || "");
-    const name = dane.Nazwa ? String(dane.Nazwa) : dane.ImiePierwsze ? `${dane.ImiePierwsze || ""} ${dane.Nazwisko || ""}`.trim() : "";
-    let address: string | undefined;
-    if (adres.AdresL1 || adres.AdresL2) {
-      address = [adres.AdresL1, adres.AdresL2].filter(Boolean).join(", ");
-    } else if (adres.Ulica || adres.Miejscowosc) {
-      address = [adres.Ulica, adres.NrDomu, adres.NrLokalu ? `/${adres.NrLokalu}` : "", adres.KodPocztowy, adres.Miejscowosc].filter(Boolean).join(" ");
-    }
-    return { nip, name: String(name || "Nieznany"), address };
-  };
-
-  const fa = faktura.Fa || {};
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawItems: any[] = fa.FaWiersze?.FaWiersz || [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lineItems = rawItems.map((item: any) => ({
-    lineNumber: Number(item.NrWiersza || 0),
-    description: String(item.P_7 || ""),
-    unit: item.P_8A ? String(item.P_8A) : undefined,
-    quantity: Number(item.P_8B || 0),
-    unitPriceNet: Number(item.P_9A || 0),
-    amountNet: Number(item.P_11 || item.P_11A || 0),
-    vatRate: Number(item.P_12 || 0),
-  }));
-
-  const podsumowanie = fa.Podsumowanie || {};
-  let amountNet = 0;
-  let amountVat = 0;
-  for (let i = 1; i <= 11; i++) {
-    if (podsumowanie[`P_13_${i}`]) amountNet += Number(podsumowanie[`P_13_${i}`]);
-    if (podsumowanie[`P_14_${i}`]) amountVat += Number(podsumowanie[`P_14_${i}`]);
+  try {
+    return parseKSeFXml(xmlData.xmlContent);
+  } catch {
+    return null;
   }
-  if (lineItems.length > 0 && amountNet === 0) amountNet = lineItems.reduce((s, i) => s + i.amountNet, 0);
-  if (lineItems.length > 0 && amountVat === 0) amountVat = lineItems.reduce((s, i) => s + Math.round(i.amountNet * (i.vatRate / 100) * 100) / 100, 0);
-
-  return {
-    seller: faktura.Podmiot1 ? extractParty(faktura.Podmiot1) : undefined,
-    buyer: faktura.Podmiot2 ? extractParty(faktura.Podmiot2) : undefined,
-    invoiceNumber: fa.P_2 ? String(fa.P_2) : undefined,
-    issueDate: fa.P_1 ? String(fa.P_1) : undefined,
-    saleDate: fa.P_6 ? String(fa.P_6 || fa.P_1) : undefined,
-    dueDate: fa.Platnosc?.TerminPlatnosci?.Termin ? String(fa.Platnosc.TerminPlatnosci.Termin) : undefined,
-    currency: String(fa.KodWaluty || "PLN"),
-    lineItems,
-    amountNet: Math.round(amountNet * 100) / 100,
-    amountVat: Math.round(amountVat * 100) / 100,
-    amountGross: Math.round((amountNet + amountVat) * 100) / 100,
-    bankAccountNumber: fa.Platnosc?.RachunekBankowy?.NrRB ? String(fa.Platnosc.RachunekBankowy.NrRB) : undefined,
-  };
 }
 
-function PartyCard({
+function formatOptionalCurrency(value: string | null | undefined): string {
+  if (value == null || value.trim() === "") return "—";
+
+  try {
+    return formatCurrency(value);
+  } catch {
+    return "—";
+  }
+}
+
+function Section({
   title,
-  party,
+  children,
 }: {
   title: string;
-  party: { nip?: string; name?: string; address?: string };
+  children: React.ReactNode;
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1 text-sm">
-        <p className="font-semibold">{party.name || "—"}</p>
-        {party.nip && (
-          <p className="font-mono text-muted-foreground">NIP: {party.nip}</p>
-        )}
-        {party.address && <p className="text-muted-foreground">{party.address}</p>}
-      </CardContent>
-    </Card>
+    <section className="space-y-3 py-5 first:pt-0 last:pb-0">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      {children}
+    </section>
   );
 }
 
-function XmlPreview({ data }: { data: XmlInvoiceData }) {
+function DataField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        {data.seller && <PartyCard title="Sprzedawca" party={data.seller} />}
-        {data.buyer && <PartyCard title="Nabywca" party={data.buyer} />}
+    <div className="min-w-0 space-y-1">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd
+        className={
+          mono
+            ? "break-all font-mono text-xs font-medium text-foreground"
+            : "break-words text-sm font-medium text-foreground"
+        }
+      >
+        {value || "—"}
+      </dd>
+    </div>
+  );
+}
+
+function ContractorSection({ doc }: { doc: DocumentRow }) {
+  return (
+    <Section title="Kontrahent">
+      <div className="w-full space-y-1.5">
+        <p className="font-semibold text-foreground">{doc.contractor.name}</p>
+        <p className="font-mono text-xs text-muted-foreground">
+          NIP: {doc.contractor.nip}
+        </p>
+        {doc.contractor.address && (
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {doc.contractor.address}
+          </p>
+        )}
       </div>
+    </Section>
+  );
+}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            Dane faktury
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Numer</span>
-              <p className="font-medium">{data.invoiceNumber || "—"}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Waluta</span>
-              <p className="font-medium">{data.currency || "PLN"}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Data wystawienia</span>
-              <p className="font-medium">
-                {data.issueDate ? formatDate(data.issueDate) : "—"}
-              </p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Data sprzedaży</span>
-              <p className="font-medium">
-                {data.saleDate ? formatDate(data.saleDate) : "—"}
-              </p>
-            </div>
-            {data.dueDate && (
-              <div>
-                <span className="text-muted-foreground">Termin płatności</span>
-                <p className="font-medium">{formatDate(data.dueDate)}</p>
-              </div>
-            )}
-            {data.bankAccountNumber && (
-              <div>
-                <span className="text-muted-foreground">Nr rachunku</span>
-                <p className="font-mono text-xs font-medium">
-                  {data.bankAccountNumber}
-                </p>
-              </div>
-            )}
+function DocumentDataSection({
+  doc,
+  xmlData,
+}: {
+  doc: DocumentRow;
+  xmlData: XmlInvoiceData | null;
+}) {
+  const source = sourceBadge[doc.source] || sourceBadge.MANUAL;
+
+  return (
+    <Section title="Dane dokumentu">
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+        <DataField label="Data wystawienia" value={formatDocumentDate(doc.issueDate)} />
+        <DataField label="Termin płatności" value={formatDocumentDate(doc.dueDate)} />
+        {xmlData?.saleDate && (
+          <DataField label="Data sprzedaży" value={formatDocumentDate(xmlData.saleDate)} />
+        )}
+        <DataField label="Kategoria" value={doc.category?.name || "—"} />
+        <DataField label="Źródło" value={source.label} />
+        {xmlData?.currency && (
+          <DataField label="Waluta" value={xmlData.currency} />
+        )}
+        <DataField
+          label="Numer rachunku"
+          value={doc.bankAccountNumber || xmlData?.bankAccountNumber || "—"}
+          mono
+        />
+        <DataField label="Numer KSeF" value={doc.ksefNumber || "—"} mono />
+        <DataField
+          label="Data utworzenia"
+          value={formatDocumentDateTime(doc.createdAt)}
+        />
+      </dl>
+    </Section>
+  );
+}
+
+function Summary({ doc }: { doc: DocumentRow }) {
+  const amounts = [
+    { label: "Netto", value: formatOptionalCurrency(doc.amountNet) },
+    { label: "VAT", value: formatOptionalCurrency(doc.amountVat) },
+    { label: "Brutto", value: formatOptionalCurrency(doc.amountGross) },
+  ];
+
+  return (
+    <Section title="Podsumowanie">
+      <dl className="grid grid-cols-3 gap-2 rounded-lg bg-muted/50 p-4 ring-1 ring-border/70">
+        {amounts.map((amount) => (
+          <div key={amount.label} className="min-w-0 text-right">
+            <dt className="text-xs text-muted-foreground">{amount.label}</dt>
+            <dd
+              className={`mt-1 whitespace-nowrap text-sm font-semibold tabular-nums sm:text-base ${
+                amount.label === "Brutto" ? "text-primary" : "text-foreground"
+              }`}
+            >
+              {amount.value}
+            </dd>
           </div>
-        </CardContent>
-      </Card>
+        ))}
+      </dl>
+    </Section>
+  );
+}
 
-      {data.lineItems && data.lineItems.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Pozycje
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">Lp</TableHead>
-                    <TableHead>Nazwa</TableHead>
-                    <TableHead className="w-16">Jedn.</TableHead>
-                    <TableHead className="w-16 text-right">Ilość</TableHead>
-                    <TableHead className="w-24 text-right">
-                      Cena netto
-                    </TableHead>
-                    <TableHead className="w-24 text-right">
-                      Wart. netto
-                    </TableHead>
-                    <TableHead className="w-16 text-right">VAT</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.lineItems.map((item, i) => (
-                    <TableRow key={i}>
-                      <TableCell>{item.lineNumber || i + 1}</TableCell>
-                      <TableCell className="max-w-[200px] truncate">
-                        {item.description || "—"}
-                      </TableCell>
-                      <TableCell>{item.unit || "—"}</TableCell>
-                      <TableCell className="text-right">
-                        {item.quantity ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {item.unitPriceNet != null
-                          ? formatCurrency(item.unitPriceNet)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {item.amountNet != null
-                          ? formatCurrency(item.amountNet)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {item.vatRate != null ? `${item.vatRate}%` : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
+function LineItems({ items }: { items: ParsedInvoice["lineItems"] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <Section title={`Pozycje (${items.length})`}>
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10">Lp.</TableHead>
+              <TableHead className="min-w-48">Nazwa</TableHead>
+              <TableHead className="text-right">Ilość</TableHead>
+              <TableHead className="text-right">Netto</TableHead>
+              <TableHead className="text-right">VAT</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item, index) => (
+              <TableRow key={`${item.lineNumber}-${index}`}>
+                <TableCell>{item.lineNumber || index + 1}</TableCell>
+                <TableCell>
+                  <p className="font-medium">{item.description || "—"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.unitPriceNet
+                      ? `${formatOptionalCurrency(item.unitPriceNet)} / ${item.unit || "szt."}`
+                      : "—"}
+                  </p>
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {item.quantity ?? "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatOptionalCurrency(item.amountNet)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {item.vatRate != null ? `${item.vatRate}%` : "—"}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </Section>
+  );
+}
+
+function AttachmentSection({ doc }: { doc: DocumentRow }) {
+  if (!doc.fileName) return null;
+
+  return (
+    <Section title="Załączniki">
+      <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <FileText className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{doc.fileName}</p>
+            <p className="text-xs text-muted-foreground">
+              {doc.fileType || "Plik dokumentu"}
+            </p>
+          </div>
+        </div>
+        <a
+          href={`/api/documents/${doc.id}/file`}
+          download={doc.fileName}
+          className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+          aria-label={`Pobierz załącznik ${doc.fileName}`}
+          title="Pobierz załącznik"
+        >
+          <Download aria-hidden="true" />
+        </a>
+      </div>
+    </Section>
+  );
+}
+
+async function copyToClipboard(value: string, successMessage: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(successMessage);
+  } catch {
+    toast.error("Nie udało się skopiować wartości");
+  }
+}
+
+function HeaderActions({
+  doc,
+  onEdit,
+}: {
+  doc: DocumentRow;
+  onEdit: (document: DocumentRow) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-3">
+      <Button type="button" variant="outline" onClick={() => onEdit(doc)}>
+        <Pencil aria-hidden="true" />
+        Edytuj
+      </Button>
+
+      {doc.fileName ? (
+        <a
+          href={`/api/documents/${doc.id}/file`}
+          download={doc.fileName}
+          className={buttonVariants({ variant: "outline" })}
+        >
+          <Download aria-hidden="true" />
+          Pobierz załącznik
+        </a>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          disabled
+          aria-label="Pobierz załącznik — brak załącznika"
+          title="Brak załącznika"
+        >
+          <Download aria-hidden="true" />
+          Pobierz załącznik
+        </Button>
       )}
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <span className="text-sm text-muted-foreground">Netto</span>
-              <p className="text-xl font-bold">
-                {data.amountNet != null
-                  ? formatCurrency(data.amountNet)
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <span className="text-sm text-muted-foreground">VAT</span>
-              <p className="text-xl font-bold">
-                {data.amountVat != null
-                  ? formatCurrency(data.amountVat)
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <span className="text-sm text-muted-foreground">Brutto</span>
-              <p className="text-xl font-bold text-primary">
-                {data.amountGross != null
-                  ? formatCurrency(data.amountGross)
-                  : "—"}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="outline"
+              aria-label="Więcej akcji dokumentu"
+            />
+          }
+        >
+          <Ellipsis aria-hidden="true" />
+          Więcej
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem
+            onClick={() =>
+              void copyToClipboard(doc.invoiceNumber, "Skopiowano numer faktury")
+            }
+          >
+            <Copy aria-hidden="true" />
+            Kopiuj numer faktury
+          </DropdownMenuItem>
+          {doc.ksefNumber && (
+            <DropdownMenuItem
+              onClick={() =>
+                void copyToClipboard(doc.ksefNumber!, "Skopiowano numer KSeF")
+              }
+            >
+              <Copy aria-hidden="true" />
+              Kopiuj numer KSeF
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
 
-function ManualPreview({ doc }: { doc: DocumentRow }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <PartyCard
-          title="Kontrahent"
-          party={{
-            name: doc.contractor.name,
-            nip: doc.contractor.nip,
-            address: doc.contractor.address,
-          }}
-        />
-      </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            Dane dokumentu
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Numer faktury</span>
-              <p className="font-medium">{doc.invoiceNumber}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Typ dokumentu</span>
-              <p className="font-medium">{doc.documentType.name}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Data wystawienia</span>
-              <p className="font-medium">{formatDate(doc.issueDate)}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Termin płatności</span>
-              <p className="font-medium">{formatDate(doc.dueDate)}</p>
-            </div>
-            {doc.category && (
-              <div>
-                <span className="text-muted-foreground">Kategoria</span>
-                <p className="font-medium">{doc.category.name}</p>
-              </div>
-            )}
-            {doc.bankAccountNumber && (
-              <div>
-                <span className="text-muted-foreground">Nr rachunku</span>
-                <p className="font-mono text-xs font-medium">
-                  {doc.bankAccountNumber}
-                </p>
-              </div>
-            )}
-            {doc.ksefNumber && (
-              <div>
-                <span className="text-muted-foreground">Numer KSeF</span>
-                <p className="font-mono text-xs font-medium">
-                  {doc.ksefNumber}
-                </p>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <span className="text-sm text-muted-foreground">Netto</span>
-              <p className="text-xl font-bold">
-                {formatCurrency(doc.amountNet)}
-              </p>
-            </div>
-            <div>
-              <span className="text-sm text-muted-foreground">VAT</span>
-              <p className="text-xl font-bold">
-                {formatCurrency(doc.amountVat)}
-              </p>
-            </div>
-            <div>
-              <span className="text-sm text-muted-foreground">Brutto</span>
-              <p className="text-xl font-bold text-primary">
-                {formatCurrency(doc.amountGross)}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function getPreviewVariant(
-  doc: DocumentRow
-): "pdf" | "xml" | "manual" {
-  if (doc.fileType?.includes("pdf") && doc.fileName) return "pdf";
-  if (doc.xmlData) return "xml";
-  return "manual";
-}
-
-export function DocumentPreview({ open, onClose, document: doc }: Props) {
+export function DocumentPreview({
+  open,
+  onClose,
+  onEdit,
+  document: doc,
+}: Props) {
   if (!doc) return null;
 
-  const variant = getPreviewVariant(doc);
+  const source = sourceBadge[doc.source] || sourceBadge.MANUAL;
+  const status = statusBadge[doc.status] || statusBadge.BUFFER;
+  const xmlData = getXmlData(doc);
+  const isPdf = Boolean(doc.fileType?.includes("pdf") && doc.fileName);
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-[600px] overflow-y-auto sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle>Podgląd dokumentu</SheetTitle>
+    <Sheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <SheetContent
+        className="gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:max-w-[480px] data-[side=right]:sm:max-w-[480px]"
+        overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-none"
+      >
+        <SheetHeader className="sticky top-0 z-20 gap-0 border-b bg-popover/95 px-5 py-4 pr-14 supports-backdrop-filter:backdrop-blur-sm">
+          <SheetTitle className="text-lg font-semibold leading-tight">
+            Faktura nr {doc.invoiceNumber}
+          </SheetTitle>
+          <SheetDescription className="mt-1">
+            {doc.documentType.name}
+          </SheetDescription>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Badge variant={source.variant}>{source.label}</Badge>
+            <Badge variant="outline" className={status.className}>
+              {status.label}
+            </Badge>
+          </div>
+          <HeaderActions
+            doc={doc}
+            onEdit={(document) => {
+              onClose();
+              onEdit(document);
+            }}
+          />
         </SheetHeader>
 
-        <div className="mt-6 space-y-6">
-          <PreviewHeader doc={doc} />
-          <Separator />
-
-          {variant === "pdf" && <PdfViewerLazy documentId={doc.id} />}
-
-          {variant === "xml" && (
-            <XmlPreview
-              data={
-                (doc.xmlData as { xmlContent?: string })?.xmlContent
-                  ? parseXmlContent((doc.xmlData as { xmlContent: string }).xmlContent)
-                  : (doc.xmlData as XmlInvoiceData)
-              }
-            />
-          )}
-
-          {variant === "manual" && <ManualPreview doc={doc} />}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
+          <div className="divide-y divide-border">
+            <ContractorSection doc={doc} />
+            <DocumentDataSection doc={doc} xmlData={xmlData} />
+            <Summary doc={doc} />
+            {xmlData?.lineItems && <LineItems items={xmlData.lineItems} />}
+            {isPdf && (
+              <Section title="Podgląd załącznika">
+                <PdfViewerLazy documentId={doc.id} />
+              </Section>
+            )}
+            <AttachmentSection doc={doc} />
+          </div>
         </div>
       </SheetContent>
     </Sheet>

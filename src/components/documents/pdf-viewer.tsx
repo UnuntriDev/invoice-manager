@@ -21,10 +21,12 @@ export default function PdfViewer({ documentId }: { documentId: string }) {
           <Button
             variant="outline"
             size="sm"
+            aria-label="Pomniejsz podgląd PDF"
+            title="Pomniejsz"
             onClick={() => setScale((s) => Math.max(0.5, s - 0.25))}
             disabled={scale <= 0.5}
           >
-            <ZoomOut className="h-4 w-4" />
+            <ZoomOut className="h-4 w-4" aria-hidden="true" />
           </Button>
           <span className="min-w-[4rem] text-center text-sm">
             {Math.round(scale * 100)}%
@@ -32,10 +34,12 @@ export default function PdfViewer({ documentId }: { documentId: string }) {
           <Button
             variant="outline"
             size="sm"
+            aria-label="Powiększ podgląd PDF"
+            title="Powiększ"
             onClick={() => setScale((s) => Math.min(2.0, s + 0.25))}
             disabled={scale >= 2.0}
           >
-            <ZoomIn className="h-4 w-4" />
+            <ZoomIn className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
         {numPages > 1 && (
@@ -43,10 +47,12 @@ export default function PdfViewer({ documentId }: { documentId: string }) {
             <Button
               variant="outline"
               size="sm"
+              aria-label="Poprzednia strona PDF"
+              title="Poprzednia strona"
               onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
               disabled={pageNumber <= 1}
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             </Button>
             <span className="min-w-[6rem] text-center text-sm">
               Strona {pageNumber} z {numPages}
@@ -54,10 +60,12 @@ export default function PdfViewer({ documentId }: { documentId: string }) {
             <Button
               variant="outline"
               size="sm"
+              aria-label="Następna strona PDF"
+              title="Następna strona"
               onClick={() => setPageNumber((p) => Math.min(numPages, p + 1))}
               disabled={pageNumber >= numPages}
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
         )}

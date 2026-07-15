@@ -1,115 +1,121 @@
-import { PrismaClient } from "../src/generated/prisma/client";
+import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
 
-async function main() {
-  console.log("Seeding database...");
+async function seedDatabase(tx: Prisma.TransactionClient) {
+  async function getOrCreateCategory(name: string, parentId: string | null = null) {
+    const existing = await tx.category.findFirst({
+      where: { name, parentId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
 
-  const invoiceSales = await prisma.documentType.upsert({
+    if (existing) {
+      return existing;
+    }
+
+    return tx.category.create({ data: { name, parentId } });
+  }
+
+  const invoiceSales = await tx.documentType.upsert({
     where: { name: "Faktura sprzedażowa" },
-    update: {},
+    update: { direction: "RECEIVABLE", isSystem: true },
     create: { name: "Faktura sprzedażowa", direction: "RECEIVABLE", isSystem: true },
   });
 
-  const invoiceCost = await prisma.documentType.upsert({
+  const invoiceCost = await tx.documentType.upsert({
     where: { name: "Faktura kosztowa" },
-    update: {},
+    update: { direction: "PAYABLE", isSystem: true },
     create: { name: "Faktura kosztowa", direction: "PAYABLE", isSystem: true },
   });
 
-  await prisma.documentType.upsert({
+  await tx.documentType.upsert({
     where: { name: "Nota obciążeniowa" },
-    update: {},
+    update: { direction: "RECEIVABLE", isSystem: false },
     create: { name: "Nota obciążeniowa", direction: "RECEIVABLE", isSystem: false },
   });
 
   console.log("  Typy dokumentow");
 
-  const catKosztyOp = await prisma.category.create({
-    data: { name: "Koszty operacyjne" },
-  });
-  const catSurowce = await prisma.category.create({
-    data: { name: "Surowce", parentId: catKosztyOp.id },
-  });
-  const catOpakowania = await prisma.category.create({
-    data: { name: "Opakowania", parentId: catKosztyOp.id },
-  });
-  const catTransport = await prisma.category.create({
-    data: { name: "Transport", parentId: catKosztyOp.id },
-  });
+  const catKosztyOp = await getOrCreateCategory("Koszty operacyjne");
+  const catSurowce = await getOrCreateCategory("Surowce", catKosztyOp.id);
+  const catOpakowania = await getOrCreateCategory("Opakowania", catKosztyOp.id);
+  const catTransport = await getOrCreateCategory("Transport", catKosztyOp.id);
 
-  const catPlantacja = await prisma.category.create({
-    data: { name: "Koszty plantacji" },
-  });
-  const catNawozy = await prisma.category.create({
-    data: { name: "Nawozy", parentId: catPlantacja.id },
-  });
-  await prisma.category.create({
-    data: { name: "Narzędzia", parentId: catPlantacja.id },
-  });
+  const catPlantacja = await getOrCreateCategory("Koszty plantacji");
+  const catNawozy = await getOrCreateCategory("Nawozy", catPlantacja.id);
+  await getOrCreateCategory("Narzędzia", catPlantacja.id);
 
-  const catPrzychody = await prisma.category.create({
-    data: { name: "Przychody" },
-  });
-  const catSprzedazHurt = await prisma.category.create({
-    data: { name: "Sprzedaż hurtowa", parentId: catPrzychody.id },
-  });
-  await prisma.category.create({
-    data: { name: "Sprzedaż detaliczna", parentId: catPrzychody.id },
-  });
+  const catPrzychody = await getOrCreateCategory("Przychody");
+  const catSprzedazHurt = await getOrCreateCategory("Sprzedaż hurtowa", catPrzychody.id);
+  await getOrCreateCategory("Sprzedaż detaliczna", catPrzychody.id);
 
   console.log("  Kategorie (drzewo)");
 
-  const packpol = await prisma.contractor.create({
-    data: {
-      name: "PackPol Sp. z o.o.",
-      nip: "5213000000",
-      address: "ul. Przemysłowa 15, 00-001 Warszawa",
-      bankAccountNumber: "61109010140000071219812874",
-      defaultCategoryId: catOpakowania.id,
-    },
+  const packpolData = {
+    name: "PackPol Sp. z o.o.",
+    nip: "5213000000",
+    address: "ul. Przemysłowa 15, 00-001 Warszawa",
+    bankAccountNumber: "61109010140000071219812874",
+    defaultCategoryId: catOpakowania.id,
+  };
+  const packpol = await tx.contractor.upsert({
+    where: { nip: packpolData.nip },
+    update: packpolData,
+    create: packpolData,
   });
 
-  const cukropol = await prisma.contractor.create({
-    data: {
-      name: "CukroPol S.A.",
-      nip: "5261040828",
-      address: "ul. Cukrownicza 8, 60-100 Poznań",
-      bankAccountNumber: "82109017640000000145349060",
-      defaultCategoryId: catSurowce.id,
-    },
+  const cukropolData = {
+    name: "CukroPol S.A.",
+    nip: "5261040828",
+    address: "ul. Cukrownicza 8, 60-100 Poznań",
+    bankAccountNumber: "82109017640000000145349060",
+    defaultCategoryId: catSurowce.id,
+  };
+  const cukropol = await tx.contractor.upsert({
+    where: { nip: cukropolData.nip },
+    update: cukropolData,
+    create: cukropolData,
   });
 
-  const transchlod = await prisma.contractor.create({
-    data: {
-      name: "TransChłód Sp. z o.o.",
-      nip: "1132191233",
-      address: "ul. Logistyczna 22, 40-200 Katowice",
-      bankAccountNumber: "27114020040000300278452624",
-      defaultCategoryId: catTransport.id,
-    },
+  const transchlodData = {
+    name: "TransChłód Sp. z o.o.",
+    nip: "1132191233",
+    address: "ul. Logistyczna 22, 40-200 Katowice",
+    bankAccountNumber: "27114020040000300278452624",
+    defaultCategoryId: catTransport.id,
+  };
+  const transchlod = await tx.contractor.upsert({
+    where: { nip: transchlodData.nip },
+    update: transchlodData,
+    create: transchlodData,
   });
 
-  const ekonawoz = await prisma.contractor.create({
-    data: {
-      name: "EkoNawóz Jan Kowalski",
-      nip: "6181003648",
-      address: "ul. Rolna 3, 33-300 Nowy Sącz",
-      bankAccountNumber: "44109024020000000614809029",
-      defaultCategoryId: catNawozy.id,
-    },
+  const ekonawozData = {
+    name: "EkoNawóz Jan Kowalski",
+    nip: "6181003648",
+    address: "ul. Rolna 3, 33-300 Nowy Sącz",
+    bankAccountNumber: "44109024020000000614809029",
+    defaultCategoryId: catNawozy.id,
+  };
+  const ekonawoz = await tx.contractor.upsert({
+    where: { nip: ekonawozData.nip },
+    update: ekonawozData,
+    create: ekonawozData,
   });
 
-  const slodkirog = await prisma.contractor.create({
-    data: {
-      name: "Cukiernia Słodki Róg Sp. z o.o.",
-      nip: "6762464585",
-      address: "ul. Floriańska 23, 31-019 Kraków",
-      bankAccountNumber: "55109025900000000135097521",
-      defaultCategoryId: catSprzedazHurt.id,
-    },
+  const slodkirogData = {
+    name: "Cukiernia Słodki Róg Sp. z o.o.",
+    nip: "6762464585",
+    address: "ul. Floriańska 23, 31-019 Kraków",
+    bankAccountNumber: "55109025900000000135097521",
+    defaultCategoryId: catSprzedazHurt.id,
+  };
+  const slodkirog = await tx.contractor.upsert({
+    where: { nip: slodkirogData.nip },
+    update: slodkirogData,
+    create: slodkirogData,
   });
 
   console.log("  Kontrahenci");
@@ -121,9 +127,9 @@ async function main() {
       contractorId: packpol.id,
       issueDate: new Date("2026-06-15"),
       dueDate: new Date("2026-07-15"),
-      amountNet: 6000,
-      amountVat: 1380,
-      amountGross: 7380,
+      amountNet: "6000.00",
+      amountVat: "1380.00",
+      amountGross: "7380.00",
       categoryId: catOpakowania.id,
       source: "KSEF" as const,
       ksefNumber: "1234567890-01-100001",
@@ -136,9 +142,9 @@ async function main() {
       contractorId: cukropol.id,
       issueDate: new Date("2026-06-20"),
       dueDate: new Date("2026-07-20"),
-      amountNet: 9600,
-      amountVat: 2208,
-      amountGross: 11808,
+      amountNet: "9600.00",
+      amountVat: "2208.00",
+      amountGross: "11808.00",
       categoryId: catSurowce.id,
       source: "KSEF" as const,
       ksefNumber: "1234567890-01-100002",
@@ -151,9 +157,9 @@ async function main() {
       contractorId: transchlod.id,
       issueDate: new Date("2026-07-02"),
       dueDate: new Date("2026-07-16"),
-      amountNet: 2800,
-      amountVat: 644,
-      amountGross: 3444,
+      amountNet: "2800.00",
+      amountVat: "644.00",
+      amountGross: "3444.00",
       categoryId: catTransport.id,
       source: "UPLOAD" as const,
       status: "ACCEPTED" as const,
@@ -165,9 +171,9 @@ async function main() {
       contractorId: ekonawoz.id,
       issueDate: new Date("2026-07-05"),
       dueDate: new Date("2026-08-04"),
-      amountNet: 890,
-      amountVat: 204.7,
-      amountGross: 1094.7,
+      amountNet: "890.00",
+      amountVat: "204.70",
+      amountGross: "1094.70",
       categoryId: catNawozy.id,
       source: "MANUAL" as const,
       status: "ACCEPTED" as const,
@@ -178,9 +184,9 @@ async function main() {
       contractorId: slodkirog.id,
       issueDate: new Date("2026-06-28"),
       dueDate: new Date("2026-07-28"),
-      amountNet: 8400,
-      amountVat: 672,
-      amountGross: 9072,
+      amountNet: "8400.00",
+      amountVat: "672.00",
+      amountGross: "9072.00",
       categoryId: catSprzedazHurt.id,
       source: "KSEF" as const,
       ksefNumber: "1234567890-01-100003",
@@ -192,9 +198,9 @@ async function main() {
       contractorId: slodkirog.id,
       issueDate: new Date("2026-07-08"),
       dueDate: new Date("2026-08-07"),
-      amountNet: 5400,
-      amountVat: 432,
-      amountGross: 5832,
+      amountNet: "5400.00",
+      amountVat: "432.00",
+      amountGross: "5832.00",
       categoryId: catSprzedazHurt.id,
       source: "KSEF" as const,
       ksefNumber: "1234567890-01-100004",
@@ -206,9 +212,9 @@ async function main() {
       contractorId: packpol.id,
       issueDate: new Date("2026-07-10"),
       dueDate: new Date("2026-08-09"),
-      amountNet: 12500,
-      amountVat: 2875,
-      amountGross: 15375,
+      amountNet: "12500.00",
+      amountVat: "2875.00",
+      amountGross: "15375.00",
       categoryId: catOpakowania.id,
       source: "KSEF" as const,
       ksefNumber: "1234567890-01-100005",
@@ -221,9 +227,9 @@ async function main() {
       contractorId: cukropol.id,
       issueDate: new Date("2026-07-11"),
       dueDate: new Date("2026-08-10"),
-      amountNet: 4800,
-      amountVat: 1104,
-      amountGross: 5904,
+      amountNet: "4800.00",
+      amountVat: "1104.00",
+      amountGross: "5904.00",
       categoryId: catSurowce.id,
       source: "KSEF" as const,
       ksefNumber: "1234567890-01-100006",
@@ -235,28 +241,112 @@ async function main() {
       contractorId: transchlod.id,
       issueDate: new Date("2026-07-12"),
       dueDate: new Date("2026-07-26"),
-      amountNet: 3500,
-      amountVat: 805,
-      amountGross: 4305,
+      amountNet: "3500.00",
+      amountVat: "805.00",
+      amountGross: "4305.00",
       categoryId: catTransport.id,
       source: "UPLOAD" as const,
+      status: "BUFFER" as const,
+    },
+    {
+      invoiceNumber: "FV/2026/06/002",
+      documentTypeId: invoiceCost.id,
+      contractorId: transchlod.id,
+      issueDate: new Date("2026-06-22"),
+      dueDate: new Date("2026-07-15"),
+      amountNet: "4200.00",
+      amountVat: "966.00",
+      amountGross: "5166.00",
+      categoryId: catTransport.id,
+      source: "KSEF" as const,
+      ksefNumber: "1234567890-01-100007",
+      status: "ACCEPTED" as const,
+      bankAccountNumber: "27114020040000300278452624",
+    },
+    {
+      invoiceNumber: "FV/2026/06/010",
+      documentTypeId: invoiceCost.id,
+      contractorId: packpol.id,
+      issueDate: new Date("2026-06-18"),
+      dueDate: new Date("2026-07-18"),
+      amountNet: "8750.00",
+      amountVat: "2012.50",
+      amountGross: "10762.50",
+      categoryId: catOpakowania.id,
+      source: "KSEF" as const,
+      ksefNumber: "1234567890-01-100008",
+      status: "ACCEPTED" as const,
+      bankAccountNumber: "61109010140000071219812874",
+    },
+    {
+      invoiceNumber: "FV/2026/07/002",
+      documentTypeId: invoiceCost.id,
+      contractorId: ekonawoz.id,
+      issueDate: new Date("2026-07-01"),
+      dueDate: new Date("2026-07-31"),
+      amountNet: "3400.00",
+      amountVat: "782.00",
+      amountGross: "4182.00",
+      categoryId: catNawozy.id,
+      source: "MANUAL" as const,
+      status: "ACCEPTED" as const,
+    },
+    {
+      invoiceNumber: "GJ/2026/07/005",
+      documentTypeId: invoiceSales.id,
+      contractorId: slodkirog.id,
+      issueDate: new Date("2026-07-14"),
+      dueDate: new Date("2026-08-13"),
+      amountNet: "6200.00",
+      amountVat: "496.00",
+      amountGross: "6696.00",
+      categoryId: catSprzedazHurt.id,
+      source: "KSEF" as const,
+      ksefNumber: "1234567890-01-100009",
       status: "BUFFER" as const,
     },
   ];
 
   for (const doc of documents) {
-    await prisma.document.create({ data: doc });
+    await tx.document.upsert({
+      where: {
+        unique_invoice: {
+          invoiceNumber: doc.invoiceNumber,
+          contractorId: doc.contractorId,
+        },
+      },
+      update: doc,
+      create: doc,
+    });
   }
 
-  console.log("  Dokumenty (9 rekordow: 6 zaakceptowanych, 3 w buforze)");
+  console.log("  Dokumenty (13 rekordow: 9 zaakceptowanych, 4 w buforze)");
 
-  await prisma.kSeFSchedule.createMany({
-    data: [
-      { hour: 1, minute: 0, isActive: true, fetchType: "BOTH" },
-      { hour: 7, minute: 0, isActive: true, fetchType: "COST" },
-      { hour: 13, minute: 0, isActive: true, fetchType: "BOTH" },
-    ],
-  });
+  const schedules = [
+    { hour: 1, minute: 0, isActive: true, fetchType: "BOTH" },
+    { hour: 7, minute: 0, isActive: true, fetchType: "COST" },
+    { hour: 13, minute: 0, isActive: true, fetchType: "BOTH" },
+  ];
+
+  for (const schedule of schedules) {
+    const existing = await tx.kSeFSchedule.findFirst({
+      where: {
+        hour: schedule.hour,
+        minute: schedule.minute,
+        fetchType: schedule.fetchType,
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+
+    if (existing) {
+      await tx.kSeFSchedule.update({
+        where: { id: existing.id },
+        data: { isActive: schedule.isActive },
+      });
+    } else {
+      await tx.kSeFSchedule.create({ data: schedule });
+    }
+  }
 
   console.log("  Harmonogram KSeF (3 wpisy: 1:00, 7:00, 13:00)");
 
@@ -276,14 +366,37 @@ async function main() {
     { columnKey: "bankAccountNumber", isVisible: false, position: 12 },
   ];
 
-  await prisma.columnConfig.createMany({ data: defaultColumns });
+  for (const column of defaultColumns) {
+    await tx.columnConfig.upsert({
+      where: { columnKey: column.columnKey },
+      update: {
+        isVisible: column.isVisible,
+        position: column.position,
+      },
+      create: column,
+    });
+  }
 
   console.log("  Konfiguracja kolumn (13 kolumn, 10 widocznych)");
+}
+
+async function main() {
+  console.log("Seeding database...");
+
+  await prisma.$transaction(
+    async (tx) => {
+      // Serializuje równoległe uruchomienia seeda. Kategorie nie mają unikalnego
+      // klucza (name, parentId), więc sama sekwencja findFirst/create nie wystarcza.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('invoice-manager-seed-v1'))`;
+      await seedDatabase(tx);
+    },
+    { maxWait: 10_000, timeout: 30_000 }
+  );
 
   console.log("\nSeed zakończony pomyślnie!");
   console.log("   Kontrahenci: 5");
-  console.log("   Kategorie: 10 (drzewo 3 poziomy)");
-  console.log("   Dokumenty: 9 (6 zaakceptowanych + 3 w buforze)");
+  console.log("   Kategorie: 10 (drzewo 2-poziomowe)");
+  console.log("   Dokumenty: 13 (9 zaakceptowanych + 4 w buforze)");
   console.log("   Typy dokumentow: 3 (2 systemowe + 1 custom)");
 }
 

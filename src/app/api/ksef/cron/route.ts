@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import * as ksefService from "@/lib/services/ksef.service";
+import { runCronTick } from "@/lib/cron/schedule-worker";
 import { successResponse } from "@/lib/api-utils";
 import { NextResponse } from "next/server";
 
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const results = await ksefService.runScheduledFetch();
+    const results = await runCronTick(new Date());
     return successResponse(results);
   } catch (error) {
     console.error("[CRON] Błąd:", error);

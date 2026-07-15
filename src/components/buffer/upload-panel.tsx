@@ -24,6 +24,8 @@ import {
   useDocumentTypes,
   useContractors,
 } from "@/lib/hooks/use-documents";
+import { pdfUploadSchema } from "@/lib/validators/schemas";
+import { getUploadFileValidationError } from "@/lib/validators/upload";
 
 export function UploadPanel() {
   const [open, setOpen] = useState(false);
@@ -46,14 +48,9 @@ export function UploadPanel() {
   const { data: contractors } = useContractors();
 
   function handleFileSelect(f: File) {
-    const maxSize = 10 * 1024 * 1024;
-    if (f.size > maxSize) {
-      toast.error("Plik jest za duży. Maksymalny rozmiar to 10MB");
-      return;
-    }
-    const allowed = ["application/pdf", "text/xml", "application/xml"];
-    if (!allowed.includes(f.type)) {
-      toast.error("Dozwolone formaty to PDF i XML");
+    const validationError = getUploadFileValidationError(f);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
     setFile(f);
@@ -83,8 +80,14 @@ export function UploadPanel() {
     formData.append("file", file);
 
     if (isPdf) {
-      for (const [key, value] of Object.entries(pdfFields)) {
-        if (value) formData.append(key, value);
+      const validation = pdfUploadSchema.safeParse(pdfFields);
+      if (!validation.success) {
+        toast.error(validation.error.issues[0]?.message ?? "Popraw dane dokumentu PDF");
+        return;
+      }
+
+      for (const [key, value] of Object.entries(validation.data)) {
+        if (typeof value === "string" && value) formData.append(key, value);
       }
     }
 
@@ -195,6 +198,7 @@ export function UploadPanel() {
                   <Select
                     value={pdfFields.documentTypeId || null}
                     onValueChange={(v) => updatePdf("documentTypeId", v ?? "")}
+                    items={Object.fromEntries(docTypes?.map((t: { id: string; name: string }) => [t.id, t.name]) ?? [])}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Wybierz typ" />
@@ -211,6 +215,7 @@ export function UploadPanel() {
                   <Select
                     value={pdfFields.contractorId || null}
                     onValueChange={(v) => updatePdf("contractorId", v ?? "")}
+                    items={Object.fromEntries(contractors?.map((c: { id: string; name: string }) => [c.id, c.name]) ?? [])}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Wybierz kontrahenta" />

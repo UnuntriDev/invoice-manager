@@ -25,6 +25,9 @@ Logika biznesowa nie żyje w komponentach React.
 - **Bufor jako status dokumentu** (BUFFER/ACCEPTED) zamiast osobnej tabeli — jedno źródło prawdy
 - **Adapter pattern dla KSeF** — czysta abstrakcja, łatwe przełączenie mock↔real
 - **Unique constraint** [invoiceNumber, contractorId] — duplikaty blokowane na poziomie DB
+- **Idempotencja importu KSeF** — `ksefNumber` jest głównym stabilnym kluczem,
+  a `invoiceNumber + NIP kontrahenta` dodatkowym kluczem biznesowym; cały batch
+  jest zapisywany w jednej transakcji
 - **Kategorie jako self-referencing relation** — drzewo dowolnej głębokości
 - **xmlData jako JSONB** — surowy XML przechowywany raz, parsowany on-demand w podglądzie
 - **shadcn/ui + TanStack Table** — konfigurowalne kolumny, sortowanie, filtrowanie
@@ -49,13 +52,22 @@ Lub jedną komendą:
 docker compose up --build
 ```
 
-Aplikacja będzie dostępna pod `http://localhost:3000`.
+Aplikacja będzie dostępna pod `http://localhost:3000`. Start produkcyjny
+wykonuje migracje, ale celowo nie uruchamia seeda. Dane demonstracyjne można
+dodać jawnie i bezpiecznie wielokrotnie:
+
+```bash
+docker compose exec app npx prisma db seed
+```
+
+Instrukcja bezpiecznego wykrywania i usuwania duplikatów kategorii znajduje się
+w pliku [`docs/category-deduplication.md`](docs/category-deduplication.md).
 
 ## Dane testowe (seed)
 
 - 5 kontrahentów (PackPol, CukroPol, TransChłód, EkoNawóz, Cukiernia Słodki Róg)
-- 10 kategorii w drzewie 3-poziomowym (Koszty operacyjne → Surowce/Opakowania/Transport)
-- 9 dokumentów (6 zaakceptowanych + 3 w buforze, mix źródeł KSeF/Upload/Ręczny)
+- 10 kategorii w drzewie 2-poziomowym (Koszty operacyjne → Surowce/Opakowania/Transport)
+- 13 dokumentów (9 zaakceptowanych + 4 w buforze, mix źródeł KSeF/Upload/Ręczny)
 - 3 typy dokumentów (2 systemowe + 1 custom)
 - 3 wpisy harmonogramu KSeF (1:00, 7:00, 13:00)
 
@@ -69,6 +81,8 @@ Testy jednostkowe pokrywają:
 - Walidację NIP (sumy kontrolne, formaty)
 - Walidację IBAN (sumy kontrolne, formaty PL)
 - Parser XML KSeF (parsowanie faktur, ekstrakcja danych)
+- Serwis dokumentów (tworzenie, duplikaty, akceptacja, auto-kategoryzacja)
+- Import KSeF (pełny batch, rollback, ponowny import, duplikaty i błędne dane)
 
 ## Znane ograniczenia
 
@@ -95,4 +109,5 @@ Testy jednostkowe pokrywają:
 - Dokumenty ręczne trafiają bezpośrednio do rejestru (nie wymagają akceptacji)
 - Auto-kategoryzacja nie nadpisuje ręcznie przypisanej kategorii
 - Typy systemowe nie mogą być usunięte
-- Duplikat = ta sama para (numer faktury + kontrahent)
+- Dla importu KSeF głównym kluczem idempotentności jest numer KSeF; para numer
+  faktury + kontrahent pozostaje dodatkową ochroną biznesową

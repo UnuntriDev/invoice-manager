@@ -1,6 +1,17 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import type { DocumentRow } from "@/components/documents/document-columns";
+
+export interface DocumentPage {
+  items: DocumentRow[];
+  nextCursor: string | null;
+}
 
 async function fetchJson(url: string, options?: RequestInit) {
   const res = await fetch(url, options);
@@ -11,9 +22,11 @@ async function fetchJson(url: string, options?: RequestInit) {
 
 export function useDocuments(params: Record<string, string> = {}) {
   const query = new URLSearchParams(params).toString();
-  return useQuery({
+  return useQuery<DocumentPage>({
     queryKey: ["documents", params],
-    queryFn: () => fetchJson(`/api/documents?${query}`),
+    queryFn: async () =>
+      (await fetchJson(`/api/documents?${query}`)) as DocumentPage,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -51,6 +64,7 @@ export function useUpdateDocument() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["documents"] });
+      qc.invalidateQueries({ queryKey: ["buffer"] });
     },
   });
 }
@@ -77,6 +91,47 @@ export function useContractors() {
   return useQuery({
     queryKey: ["contractors"],
     queryFn: () => fetchJson("/api/contractors"),
+  });
+}
+
+export function useCreateContractor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      fetchJson("/api/contractors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contractors"] });
+    },
+  });
+}
+
+export function useUpdateContractor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      fetchJson(`/api/contractors/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contractors"] });
+    },
+  });
+}
+
+export function useDeleteContractor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetchJson(`/api/contractors/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contractors"] });
+    },
   });
 }
 
@@ -284,6 +339,18 @@ export function useDeleteSchedule() {
       fetchJson(`/api/ksef/schedule/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["ksef-schedules"] });
+    },
+  });
+}
+
+export function useRunSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetchJson(`/api/ksef/schedule/${id}/run`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ksef-schedules"] });
+      qc.invalidateQueries({ queryKey: ["buffer"] });
     },
   });
 }

@@ -1,0 +1,36 @@
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      COMPANY_NIP: ${COMPANY_NIP:?COMPANY_NIP is required}
+      KSEF_ENV: ${KSEF_ENV:-mock}
+      KSEF_NIP: ${KSEF_NIP:?KSEF_NIP is required}
+      KSEF_TOKEN: ${KSEF_TOKEN:?KSEF_TOKEN is required}
+      CRON_SECRET: ${CRON_SECRET:?CRON_SECRET is required}
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-10}
+      NODE_ENV: production
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - uploads:/app/uploads
+    restart: unless-stopped
+
+volumes:
+  uploads:

@@ -1,5 +1,9 @@
 import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import {
+  getCategoryParentScope,
+  normalizeCategoryName,
+} from "../src/lib/category-key";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
@@ -15,7 +19,14 @@ async function seedDatabase(tx: Prisma.TransactionClient) {
       return existing;
     }
 
-    return tx.category.create({ data: { name, parentId } });
+    return tx.category.create({
+      data: {
+        name,
+        nameNormalized: normalizeCategoryName(name),
+        parentId,
+        parentScope: getCategoryParentScope(parentId),
+      },
+    });
   }
 
   const invoiceSales = await tx.documentType.upsert({
@@ -55,7 +66,7 @@ async function seedDatabase(tx: Prisma.TransactionClient) {
 
   const packpolData = {
     name: "PackPol Sp. z o.o.",
-    nip: "5213000000",
+    nip: "5213000009",
     address: "ul. Przemysłowa 15, 00-001 Warszawa",
     bankAccountNumber: "61109010140000071219812874",
     defaultCategoryId: catOpakowania.id,
@@ -94,7 +105,7 @@ async function seedDatabase(tx: Prisma.TransactionClient) {
 
   const ekonawozData = {
     name: "EkoNawóz Jan Kowalski",
-    nip: "6181003648",
+    nip: "6181003642",
     address: "ul. Rolna 3, 33-300 Nowy Sącz",
     bankAccountNumber: "44109024020000000614809029",
     defaultCategoryId: catNawozy.id,
@@ -107,7 +118,7 @@ async function seedDatabase(tx: Prisma.TransactionClient) {
 
   const slodkirogData = {
     name: "Cukiernia Słodki Róg Sp. z o.o.",
-    nip: "6762464585",
+    nip: "6762464586",
     address: "ul. Floriańska 23, 31-019 Kraków",
     bankAccountNumber: "55109025900000000135097521",
     defaultCategoryId: catSprzedazHurt.id,
@@ -385,8 +396,9 @@ async function main() {
 
   await prisma.$transaction(
     async (tx) => {
-      // Serializuje równoległe uruchomienia seeda. Kategorie nie mają unikalnego
-      // klucza (name, parentId), więc sama sekwencja findFirst/create nie wystarcza.
+      // Serializuje cały seed, aby równoległe uruchomienia nie rozjechały
+      // zależności między rekordami. Unikalność nazw rodzeństwa kategorii
+      // jest dodatkowo wymuszana w bazie przez (parentScope, nameNormalized).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('invoice-manager-seed-v1'))`;
       await seedDatabase(tx);
     },

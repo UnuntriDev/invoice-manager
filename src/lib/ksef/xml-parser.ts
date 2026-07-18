@@ -48,15 +48,32 @@ const parserOptions = {
   isArray: (name: string) => {
     return name === "FaWiersz";
   },
+  processEntities: false,
+  maxNestedTags: 100,
 };
 
+export const MAX_KSEF_XML_CHARACTERS = 2_000_000;
+
+export function assertSafeKSeFXml(xmlString: string): void {
+  if (xmlString.length === 0) {
+    throw new Error("Plik XML jest pusty");
+  }
+  if (xmlString.length > MAX_KSEF_XML_CHARACTERS) {
+    throw new Error("Plik XML przekracza bezpieczny limit 2 000 000 znaków");
+  }
+  if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(xmlString)) {
+    throw new Error("Deklaracje DTD i encje XML nie są dozwolone");
+  }
+}
+
 export function parseKSeFXml(xmlString: string): ParsedInvoice {
+  assertSafeKSeFXml(xmlString);
   const parser = new XMLParser(parserOptions);
-  const parsed = parser.parse(xmlString);
+  const parsed = parser.parse(xmlString, true);
 
   const faktura = parsed.Faktura;
   if (!faktura) {
-    throw new Error("Nieprawidłowy format XML — brak elementu głównego 'Faktura'");
+    throw new Error("Nieprawidłowy format XML: brak elementu głównego 'Faktura'");
   }
 
   const naglowek = faktura.Naglowek;
@@ -97,9 +114,9 @@ export function parseKSeFXml(xmlString: string): ParsedInvoice {
   }
 
   const faWiersze = fa.FaWiersze;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Wynik parsera XML ma dynamiczny kształt zależny od wariantu FA.
   const rawItems: any[] = faWiersze?.FaWiersz || [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Elementy FA(2)/FA(3) nie mają wspólnego typu generowanego ze schematu.
   const lineItems = rawItems.map((item: any) => ({
     lineNumber: Number(item.NrWiersza || 0),
     description: String(item.P_7 || ""),
@@ -163,7 +180,7 @@ export function parseKSeFXml(xmlString: string): ParsedInvoice {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Struktura Podmiot różni się między wariantami dokumentu XML.
 function extractParty(podmiot: any): { nip: string; name: string; address?: string } {
   const dane = podmiot.DaneIdentyfikacyjne || {};
   const adres = podmiot.Adres || {};
@@ -194,11 +211,8 @@ function extractParty(podmiot: any): { nip: string; name: string; address?: stri
 
 export function isKSeFXml(content: string): boolean {
   try {
-    return (
-      content.includes("<Faktura") &&
-      (content.includes("Podmiot1") || content.includes("podmiot1")) &&
-      (content.includes("<Fa>") || content.includes("<fa>"))
-    );
+    parseKSeFXml(content);
+    return true;
   } catch {
     return false;
   }

@@ -5,16 +5,36 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from "@tanstack/react-query";
-import type { DocumentRow } from "@/components/documents/document-columns";
+import type {
+  DocumentDetail,
+  DocumentRow,
+} from "@/components/documents/document-columns";
 
 export interface DocumentPage {
   items: DocumentRow[];
   nextCursor: string | null;
+  /** Łączna liczba dokumentów pasujących do filtrów (wszystkie strony). */
+  total: number;
+}
+
+export function invalidateDocumentViews(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: ["documents"] });
+  void queryClient.invalidateQueries({ queryKey: ["buffer"] });
 }
 
 async function fetchJson(url: string, options?: RequestInit) {
   const res = await fetch(url, options);
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(
+      res.ok
+        ? "Serwer zwrócił nieoczekiwany format odpowiedzi"
+        : `Błąd serwera (${res.status}): ${text.slice(0, 200)}`,
+    );
+  }
   const json = await res.json();
   if (!res.ok) throw new Error(json.error || "Wystąpił błąd");
   return json.data;
@@ -31,7 +51,7 @@ export function useDocuments(params: Record<string, string> = {}) {
 }
 
 export function useDocument(id: string | null) {
-  return useQuery({
+  return useQuery<DocumentDetail>({
     queryKey: ["document", id],
     queryFn: () => fetchJson(`/api/documents/${id}`),
     enabled: !!id,
@@ -48,7 +68,7 @@ export function useCreateDocument() {
         body: JSON.stringify(data),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["documents"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -63,8 +83,7 @@ export function useUpdateDocument() {
         body: JSON.stringify(data),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["documents"] });
-      qc.invalidateQueries({ queryKey: ["buffer"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -75,7 +94,7 @@ export function useDeleteDocument() {
     mutationFn: (id: string) =>
       fetchJson(`/api/documents/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["documents"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -105,6 +124,7 @@ export function useCreateContractor() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contractors"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -120,6 +140,7 @@ export function useUpdateContractor() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contractors"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -131,6 +152,7 @@ export function useDeleteContractor() {
       fetchJson(`/api/contractors/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contractors"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -153,6 +175,8 @@ export function useCreateCategory() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["contractors"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -168,6 +192,8 @@ export function useUpdateCategory() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["contractors"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -179,6 +205,8 @@ export function useDeleteCategory() {
       fetchJson(`/api/categories/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["contractors"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -194,6 +222,7 @@ export function useCreateDocumentType() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["documentTypes"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -209,6 +238,7 @@ export function useUpdateDocumentType() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["documentTypes"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -220,6 +250,7 @@ export function useDeleteDocumentType() {
       fetchJson(`/api/document-types/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["documentTypes"] });
+      invalidateDocumentViews(qc);
     },
   });
 }
@@ -246,10 +277,12 @@ export function useUpdateColumnConfig() {
   });
 }
 
-export function useBufferDocuments() {
-  return useQuery({
-    queryKey: ["buffer"],
-    queryFn: () => fetchJson("/api/buffer"),
+export function useBufferDocuments(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return useQuery<DocumentPage>({
+    queryKey: ["buffer", params],
+    queryFn: () => fetchJson(`/api/buffer?${query}`),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -291,6 +324,41 @@ export function useUploadDocument() {
       fetchJson("/api/upload", { method: "POST", body: formData }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buffer"] });
+    },
+  });
+}
+
+export interface PdfExtractionResult {
+  fields: Partial<{
+    invoiceNumber: string;
+    contractorId: string;
+    issueDate: string;
+    dueDate: string;
+    amountNet: string;
+    amountVat: string;
+    amountGross: string;
+  }>;
+  detected: string[];
+  warnings: string[];
+}
+
+export function useUploadConfig() {
+  return useQuery<{ maxSizeBytes: number; maxSizeMb: number }>({
+    queryKey: ["upload-config"],
+    queryFn: () => fetchJson("/api/config/upload"),
+    staleTime: Infinity,
+  });
+}
+
+export function useExtractPdfDocument() {
+  return useMutation<PdfExtractionResult, Error, File>({
+    mutationFn: async (file) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return (await fetchJson("/api/upload/extract", {
+        method: "POST",
+        body: formData,
+      })) as PdfExtractionResult;
     },
   });
 }

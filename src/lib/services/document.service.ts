@@ -1,27 +1,58 @@
 import prisma from "@/lib/prisma";
 import type {
-  DocumentCreate,
   DocumentListQuery,
+  ManualDocumentCreate,
   DocumentUpdate,
 } from "@/lib/validators/schemas";
 import type { Prisma } from "@/generated/prisma/client";
 import { parseMoney } from "@/lib/money";
-import {
-  finalizeStagedAttachment,
-  readAttachment,
-  restoreStagedAttachment,
-  stageAttachmentForDeletion,
-  type StagedAttachment,
-  writeAttachment,
-} from "@/lib/storage/attachment-storage";
-import {
-  logAttachmentCleanupError,
-  logMissingAttachment,
-} from "@/lib/storage/attachment-logger";
+import { processAttachmentCleanupTask } from "@/lib/services/attachment-reconciliation.service";
+import { DuplicateError } from "@/lib/errors/validation-errors";
+
+export { DuplicateError } from "@/lib/errors/validation-errors";
+
+export const documentListSelect = {
+  id: true,
+  invoiceNumber: true,
+  documentTypeId: true,
+  documentType: {
+    select: { id: true, name: true, direction: true, isSystem: true },
+  },
+  contractorId: true,
+  contractor: {
+    select: {
+      id: true,
+      name: true,
+      nip: true,
+      address: true,
+      bankAccountNumber: true,
+      defaultCategoryId: true,
+    },
+  },
+  issueDate: true,
+  dueDate: true,
+  amountNet: true,
+  amountVat: true,
+  amountGross: true,
+  bankAccountNumber: true,
+  categoryId: true,
+  category: { select: { id: true, name: true, parentId: true } },
+  source: true,
+  ksefNumber: true,
+  status: true,
+  fileName: true,
+  fileType: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.DocumentSelect;
+
+const documentDetailSelect = {
+  ...documentListSelect,
+  xmlData: true,
+} satisfies Prisma.DocumentSelect;
 
 export async function listAcceptedDocuments(params: DocumentListQuery) {
-  // Status rejestru jest częścią kontraktu serwera i nie może zostać
-  // nadpisany parametrem zapytania przekazanym przez klienta.
+  // Status wymuszony serwerowo
   const where: Prisma.DocumentWhereInput = { status: "ACCEPTED" };
 
   if (params.documentTypeId) where.documentTypeId = params.documentTypeId;
@@ -61,19 +92,18 @@ export async function listAcceptedDocuments(params: DocumentListQuery) {
     { id: params.sortOrder },
   ] as Prisma.DocumentOrderByWithRelationInput[];
 
-  const documents = await prisma.document.findMany({
-    where,
-    orderBy,
-    take: params.pageSize + 1,
-    ...(params.cursor
-      ? { cursor: { id: params.cursor }, skip: 1 }
-      : {}),
-    include: {
-      documentType: true,
-      contractor: true,
-      category: true,
-    },
-  });
+  const [documents, total] = await Promise.all([
+    prisma.document.findMany({
+      where,
+      orderBy,
+      take: params.pageSize + 1,
+      ...(params.cursor
+        ? { cursor: { id: params.cursor }, skip: 1 }
+        : {}),
+      select: documentListSelect,
+    }),
+    prisma.document.count({ where }),
+  ]);
 
   const hasNextPage = documents.length > params.pageSize;
   const items = hasNextPage ? documents.slice(0, params.pageSize) : documents;
@@ -81,21 +111,25 @@ export async function listAcceptedDocuments(params: DocumentListQuery) {
   return {
     items,
     nextCursor: hasNextPage ? items.at(-1)?.id ?? null : null,
+    total,
   };
 }
 
 export async function getDocument(id: string) {
   return prisma.document.findUnique({
     where: { id },
-    include: {
-      documentType: true,
-      contractor: true,
-      category: true,
-    },
+    select: documentDetailSelect,
   });
 }
 
-export async function createDocument(data: DocumentCreate) {
+export async function getDocumentAttachment(id: string) {
+  return prisma.document.findUnique({
+    where: { id },
+    select: { fileKey: true, fileName: true, fileType: true },
+  });
+}
+
+export async function createDocument(data: ManualDocumentCreate) {
   const existing = await prisma.document.findUnique({
     where: {
       unique_invoice: {
@@ -134,9 +168,9 @@ export async function createDocument(data: DocumentCreate) {
       amountGross: parseMoney(data.amountGross),
       bankAccountNumber: data.bankAccountNumber || null,
       categoryId,
-      source: data.source,
-      ksefNumber: data.ksefNumber,
-      status: data.status,
+      source: "MANUAL",
+      ksefNumber: null,
+      status: "ACCEPTED",
     },
     include: {
       documentType: true,
@@ -170,114 +204,37 @@ export async function updateDocument(id: string, data: DocumentUpdate) {
 }
 
 export async function deleteDocument(id: string) {
-  const document = await prisma.document.findUnique({
-    where: { id },
-    select: { filePath: true },
-  });
-
-  // Zachowujemy dotychczasową semantykę Prisma P2025 dla nieistniejącego ID.
-  if (!document) {
-    return prisma.document.delete({ where: { id } });
-  }
-
-  if (!document.filePath) {
-    return prisma.document.delete({ where: { id } });
-  }
-
-  let stagedAttachment: StagedAttachment | null;
-  try {
-    stagedAttachment = await stageAttachmentForDeletion(document.filePath);
-  } catch (error) {
-    logAttachmentCleanupError(
-      "stage-before-document-delete",
-      document.filePath,
-      error
-    );
-    throw error;
-  }
-
-  // Brak pliku nie blokuje usunięcia osieroconego rekordu z bazy.
-  if (!stagedAttachment) {
-    logMissingAttachment(id, document.filePath);
-    return prisma.document.delete({ where: { id } });
-  }
-
-  const attachmentBackup = await readAttachment(stagedAttachment.stagedPath);
-  if (!attachmentBackup) {
-    const error = new Error(
-      "Załącznik zniknął podczas przygotowania do usunięcia dokumentu"
-    );
-    logAttachmentCleanupError(
-      "read-staged-attachment-before-delete",
-      stagedAttachment.stagedPath,
-      error
-    );
-    try {
-      await restoreStagedAttachment(stagedAttachment);
-    } catch (restoreError) {
-      logAttachmentCleanupError(
-        "restore-unreadable-staged-attachment",
-        stagedAttachment.originalPath,
-        restoreError
-      );
-    }
-    throw error;
-  }
-
-  try {
-    return await prisma.$transaction(async (transaction) => {
-      const deleted = await transaction.document.delete({ where: { id } });
-      try {
-        await finalizeStagedAttachment(stagedAttachment);
-      } catch (error) {
-        logAttachmentCleanupError(
-          "finalize-document-attachment-delete",
-          stagedAttachment.stagedPath,
-          error
-        );
-        // Odrzucenie callbacku wycofuje usunięcie rekordu w bazie.
-        throw error;
-      }
-      return deleted;
+  const { deleted, fileKey } = await prisma.$transaction(async (transaction) => {
+    const document = await transaction.document.findUnique({
+      where: { id },
+      select: { fileKey: true },
     });
-  } catch (error) {
-    try {
-      await restoreStagedAttachment(stagedAttachment);
-    } catch {
-      try {
-        const originalFile = await readAttachment(stagedAttachment.originalPath);
-        if (!originalFile) {
-          await writeAttachment(
-            stagedAttachment.originalPath,
-            attachmentBackup
-          );
-        }
-      } catch (backupRestoreError) {
-        logAttachmentCleanupError(
-          "restore-after-document-delete-failure",
-          stagedAttachment.originalPath,
-          backupRestoreError
-        );
-      }
+
+    if (!document) {
+      return {
+        deleted: await transaction.document.delete({ where: { id } }),
+        fileKey: null,
+      };
     }
-    throw error;
-  }
-}
 
-export async function acceptDocuments(documentIds: string[]) {
-  const result = await prisma.document.updateMany({
-    where: {
-      id: { in: documentIds },
-      status: "BUFFER",
-    },
-    data: { status: "ACCEPTED" },
+    if (document.fileKey) {
+      await transaction.attachmentCleanupTask.upsert({
+        where: { fileKey: document.fileKey },
+        update: { nextAttemptAt: new Date(), lastError: null },
+        create: { fileKey: document.fileKey },
+      });
+    }
+
+    return {
+      deleted: await transaction.document.delete({ where: { id } }),
+      fileKey: document.fileKey,
+    };
   });
-  return result.count;
-}
 
-export class DuplicateError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DuplicateError";
+  // Cleanup po COMMIT; przy awarii reconciler ponowi
+  if (fileKey) {
+    await processAttachmentCleanupTask(fileKey);
   }
+
+  return deleted;
 }

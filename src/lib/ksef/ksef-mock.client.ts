@@ -5,25 +5,42 @@ import {
   KSeFInvoiceLineItem,
 } from "./ksef-client.interface";
 import { Decimal } from "@/lib/money";
+import { createHash } from "crypto";
+import { validateNip } from "@/lib/validators/nip";
+
+interface MockParty {
+  nip: string;
+  name: string;
+  address: string;
+}
+
+function mockParty(party: MockParty): MockParty {
+  if (!validateNip(party.nip).valid) {
+    throw new Error(
+      `Nieprawidłowy NIP w danych mock KSeF dla ${party.name}: ${party.nip}`,
+    );
+  }
+  return party;
+}
 
 const MOCK_SUPPLIERS = [
-  { nip: "5213000000", name: "PackPol Sp. z o.o.", address: "ul. Przemysłowa 15, 00-001 Warszawa" },
-  { nip: "5261040828", name: "CukroPol S.A.", address: "ul. Cukrownicza 8, 60-100 Poznań" },
-  { nip: "6181003648", name: "EkoNawóz Jan Kowalski", address: "ul. Rolna 3, 33-300 Nowy Sącz" },
-  { nip: "1132191233", name: "TransChłód Sp. z o.o.", address: "ul. Logistyczna 22, 40-200 Katowice" },
+  mockParty({ nip: "5213000009", name: "PackPol Sp. z o.o.", address: "ul. Przemysłowa 15, 00-001 Warszawa" }),
+  mockParty({ nip: "5261040828", name: "CukroPol S.A.", address: "ul. Cukrownicza 8, 60-100 Poznań" }),
+  mockParty({ nip: "6181003642", name: "EkoNawóz Jan Kowalski", address: "ul. Rolna 3, 33-300 Nowy Sącz" }),
+  mockParty({ nip: "1132191233", name: "TransChłód Sp. z o.o.", address: "ul. Logistyczna 22, 40-200 Katowice" }),
 ];
 
 const MOCK_BUYERS = [
-  { nip: "6762464585", name: "Cukiernia Słodki Róg Sp. z o.o.", address: "ul. Floriańska 23, 31-019 Kraków" },
-  { nip: "5566778899", name: "Sieć Delikatesy Natura Sp. z o.o.", address: "ul. Handlowa 5, 50-100 Wrocław" },
-  { nip: "9988776655", name: "Hurtownia Smakosz S.A.", address: "ul. Targowa 12, 90-001 Łódź" },
+  mockParty({ nip: "6762464586", name: "Cukiernia Słodki Róg Sp. z o.o.", address: "ul. Floriańska 23, 31-019 Kraków" }),
+  mockParty({ nip: "5566778891", name: "Sieć Delikatesy Natura Sp. z o.o.", address: "ul. Handlowa 5, 50-100 Wrocław" }),
+  mockParty({ nip: "9988776652", name: "Hurtownia Smakosz S.A.", address: "ul. Targowa 12, 90-001 Łódź" }),
 ];
 
-const GUMIJAGODA = {
+const GUMIJAGODA = mockParty({
   nip: "9876543210",
   name: "Gumijagoda Sp. z o.o.",
   address: "ul. Beskidzka 7, 34-500 Zakopane",
-};
+});
 
 const MOCK_PRODUCTS_COST = [
   { desc: "Opakowania kartonowe 500ml (paleta)", unit: "szt", price: "1200.00" },
@@ -43,20 +60,28 @@ const MOCK_PRODUCTS_SALES = [
   { desc: "Mix prezentowy gumijagodowy (karton 12szt)", unit: "karton", price: "360.00" },
 ];
 
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+function deterministicInt(seed: string, min: number, max: number): number {
+  const digest = createHash("sha256").update(seed).digest("hex");
+  const value = Number.parseInt(digest.slice(0, 12), 16);
+  return min + (value % (max - min + 1));
 }
 
-function randomDate(from: string, to: string): string {
-  const start = new Date(from).getTime();
-  const end = new Date(to).getTime();
-  const date = new Date(start + Math.random() * (end - start));
-  return date.toISOString().split("T")[0];
+function deterministicDate(from: string, to: string, seed: string): string {
+  const start = Date.parse(`${from}T00:00:00.000Z`);
+  const end = Date.parse(`${to}T00:00:00.000Z`);
+  const days = Math.max(0, Math.floor((end - start) / 86_400_000));
+  const offset = deterministicInt(seed, 0, days);
+  return new Date(start + offset * 86_400_000).toISOString().slice(0, 10);
 }
 
-function generateKSeFNumber(): string {
-  const num = randomInt(1000000000, 9999999999);
-  return `${num}-${randomInt(10, 99)}-${randomInt(100000, 999999)}`;
+function generateKSeFNumber(seed: string): string {
+  const digits = createHash("sha256")
+    .update(seed)
+    .digest("hex")
+    .split("")
+    .map((char) => String(Number.parseInt(char, 16) % 10))
+    .join("");
+  return `${digits.slice(0, 10)}-${digits.slice(10, 12)}-${digits.slice(12, 18)}`;
 }
 
 function generateInvoiceNumber(type: "COST" | "SALES", date: string, index: number): string {
@@ -144,7 +169,6 @@ export class MockKSeFClient implements IKSeFClient {
   private authenticated = false;
 
   async authenticate(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 500));
     this.authenticated = true;
   }
 
@@ -157,31 +181,37 @@ export class MockKSeFClient implements IKSeFClient {
       await this.authenticate();
     }
 
-    await new Promise((resolve) =>
-      setTimeout(resolve, 800 + Math.random() * 700)
-    );
-
-    const count = randomInt(3, 10);
+    const count = 4;
     const invoices: KSeFInvoice[] = [];
 
     for (let i = 0; i < count; i++) {
       const isCost = params.type === "COST";
+      const seed = `${params.type}:${params.dateFrom}:${params.dateTo}:${i}`;
       const products = isCost ? MOCK_PRODUCTS_COST : MOCK_PRODUCTS_SALES;
       const counterparties = isCost ? MOCK_SUPPLIERS : MOCK_BUYERS;
-      const counterparty =
-        counterparties[randomInt(0, counterparties.length - 1)];
+      const counterparty = counterparties[
+        deterministicInt(`${seed}:counterparty`, 0, counterparties.length - 1)
+      ];
 
-      const issueDate = randomDate(params.dateFrom, params.dateTo);
-      const dueDate = new Date(issueDate);
-      dueDate.setDate(dueDate.getDate() + randomInt(14, 60));
+      const issueDate = deterministicDate(
+        params.dateFrom,
+        params.dateTo,
+        `${seed}:date`,
+      );
+      const dueDate = new Date(`${issueDate}T00:00:00.000Z`);
+      dueDate.setUTCDate(
+        dueDate.getUTCDate() + deterministicInt(`${seed}:due`, 14, 60),
+      );
 
-      const lineCount = randomInt(1, 4);
+      const lineCount = deterministicInt(`${seed}:lines`, 1, 4);
       const lineItems: KSeFInvoiceLineItem[] = [];
       let totalNet = new Decimal(0);
 
       for (let j = 0; j < lineCount; j++) {
-        const product = products[randomInt(0, products.length - 1)];
-        const quantity = randomInt(1, 50);
+        const product = products[
+          deterministicInt(`${seed}:product:${j}`, 0, products.length - 1)
+        ];
+        const quantity = deterministicInt(`${seed}:quantity:${j}`, 1, 50);
         const amountNet = new Decimal(product.price).times(quantity).toFixed(2);
         totalNet = totalNet.plus(amountNet);
 
@@ -201,11 +231,11 @@ export class MockKSeFClient implements IKSeFClient {
       const totalGross = totalNet.plus(totalVat).toFixed(2);
 
       const invoiceData = {
-        ksefNumber: generateKSeFNumber(),
+        ksefNumber: generateKSeFNumber(seed),
         invoiceNumber: generateInvoiceNumber(params.type, issueDate, i + 1),
         issueDate,
         saleDate: issueDate,
-        dueDate: dueDate.toISOString().split("T")[0],
+        dueDate: dueDate.toISOString().slice(0, 10),
         currency: "PLN",
         seller: isCost ? counterparty : GUMIJAGODA,
         buyer: isCost ? GUMIJAGODA : counterparty,
@@ -233,5 +263,5 @@ export function createKSeFClient(): IKSeFClient {
     return new MockKSeFClient();
   }
 
-  return new MockKSeFClient();
+  throw new Error(`Nieobsługiwane środowisko KSeF: ${env}`);
 }

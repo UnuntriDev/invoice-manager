@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Wersjonowany, minifikowany worker biblioteki pdf.js nie jest kodem aplikacji.
+    "public/pdf.worker.min.mjs",
   ]),
 ]);
 

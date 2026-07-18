@@ -7,13 +7,13 @@ datasource db {
   provider = "postgresql"
 }
 
-// ============================================================
+// ---
 // TYPY DOKUMENTÓW
-// ============================================================
+// ---
 
 enum DocumentDirection {
-  RECEIVABLE // należność — do otrzymania (np. faktura sprzedażowa)
-  PAYABLE    // zobowiązanie — do zapłaty (np. faktura kosztowa)
+  RECEIVABLE // należność (faktura sprzedażowa)
+  PAYABLE    // zobowiązanie (faktura kosztowa)
 }
 
 model DocumentType {
@@ -26,9 +26,9 @@ model DocumentType {
   updatedAt DateTime           @updatedAt
 }
 
-// ============================================================
+// ---
 // KONTRAHENCI
-// ============================================================
+// ---
 
 model Contractor {
   id                String     @id @default(cuid())
@@ -45,14 +45,16 @@ model Contractor {
   @@index([nip])
 }
 
-// ============================================================
-// KATEGORIE (drzewo — self-referencing)
-// ============================================================
+// ---
+// KATEGORIE (self-referencing tree)
+// ---
 
 model Category {
   id          String       @id @default(cuid())
   name        String
+  nameNormalized String
   parentId    String?
+  parentScope String
   parent      Category?    @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
   children             Category[]           @relation("CategoryTree")
   contractors          Contractor[]
@@ -62,15 +64,16 @@ model Category {
   updatedAt   DateTime     @updatedAt
 
   @@index([parentId])
+  @@unique([parentScope, nameNormalized], name: "unique_category_sibling_name")
 }
 
-// ============================================================
+// ---
 // DOKUMENTY (faktury)
-// ============================================================
+// ---
 
 enum DocumentStatus {
-  BUFFER   // w buforze — czeka na akceptację
-  ACCEPTED // zaakceptowany — w rejestrze
+  BUFFER   // czeka na akceptację
+  ACCEPTED // w rejestrze
 }
 
 enum DocumentSource {
@@ -99,7 +102,7 @@ model Document {
   ksefNumber        String?        @unique
   status            DocumentStatus @default(BUFFER)
   fileName          String?
-  filePath          String?
+  fileKey           String?
   fileType          String?
   xmlData           Json?
   createdAt         DateTime       @default(now())
@@ -113,11 +116,28 @@ model Document {
   @@index([contractorId])
   @@index([categoryId])
   @@index([source])
+  @@index([status, issueDate, id])
+  @@index([status, dueDate, id])
+  @@index([status, createdAt, id])
 }
 
-// ============================================================
+// Trwały tombstone dla załącznika. Rekord powstaje w tej samej transakcji,
+// w której usuwany jest dokument. Fizyczny plik jest usuwany dopiero po commit.
+model AttachmentCleanupTask {
+  id            String   @id @default(cuid())
+  fileKey       String   @unique
+  attempts      Int      @default(0)
+  lastError     String?
+  nextAttemptAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([nextAttemptAt])
+}
+
+// ---
 // HARMONOGRAM KSeF
-// ============================================================
+// ---
 
 model KSeFSchedule {
   id        String    @id @default(cuid())
@@ -136,9 +156,9 @@ model KSeFSchedule {
   @@index([isActive, hour, minute])
 }
 
-// ============================================================
-// REGUŁY AUTO-KATEGORYZACJI (bonus)
-// ============================================================
+// ---
+// REGUŁY AUTO-KATEGORYZACJI
+// ---
 
 model CategorizationRule {
   id         String   @id @default(cuid())
@@ -152,9 +172,9 @@ model CategorizationRule {
   updatedAt  DateTime @updatedAt
 }
 
-// ============================================================
+// ---
 // KONFIGURACJA KOLUMN
-// ============================================================
+// ---
 
 model ColumnConfig {
   id        String  @id @default(cuid())

@@ -42,7 +42,7 @@ function invoice(overrides: Partial<KSeFInvoice> = {}): KSeFInvoice {
     dueDate: "2026-08-09",
     currency: "PLN",
     seller: {
-      nip: "5213000000",
+      nip: "5213000009",
       name: "PackPol Sp. z o.o.",
       address: "Warszawa",
     },
@@ -211,6 +211,38 @@ describe("importKSeFBatch", () => {
       imported: 0,
       skipped: 1,
     });
+  });
+
+  it("keeps concurrent imports free of duplicate documents", async () => {
+    const persistedKsefNumbers = new Set<string>();
+    mockDocumentCreateMany.mockImplementation(
+      async ({ data }: { data: Array<{ ksefNumber: string }> }) => {
+        await Promise.resolve();
+        let count = 0;
+        for (const row of data) {
+          if (!persistedKsefNumbers.has(row.ksefNumber)) {
+            persistedKsefNumbers.add(row.ksefNumber);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      importKSeFBatch([invoice()], params),
+      importKSeFBatch([invoice()], params),
+    ]);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(
+      [first, second].reduce(
+        (sum, result) => sum + (result.success ? result.imported : 0),
+        0,
+      ),
+    ).toBe(1);
+    expect(persistedKsefNumbers.size).toBe(1);
   });
 
   it("skips duplicates inside one batch before creating related records", async () => {

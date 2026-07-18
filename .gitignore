@@ -13,6 +13,12 @@
 # testing
 /coverage
 
+# playwright (e2e)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # next.js
 /.next/
 /out/
@@ -22,7 +28,18 @@
 
 # misc
 .DS_Store
+Thumbs.db
+Desktop.ini
 *.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+
+# editors
+.idea/
+.vscode/
+*.swp
 
 # debug
 npm-debug.log*
@@ -32,8 +49,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # vercel
 .vercel
@@ -46,3 +63,17 @@ next-env.d.ts
 
 # uploads
 /uploads
+/uploads-ci
+/backups
+/tmp
+*.dump
+*.backup
+*.bak
+
+# local agent and Claude state
+.agents/
+.claude/
+.codex/
+.railway/
+AGENTS.md
+CLAUDE.md

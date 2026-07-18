@@ -52,9 +52,7 @@ export const isoDateSchema = z
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
   }, "Nieprawidłowa data");
 
-// ===================================================
-// KONTRAHENT
-// ===================================================
+// --- KONTRAHENT ---
 
 export const contractorCreateSchema = z.object({
   name: z.string().trim().min(1, "Nazwa kontrahenta jest wymagana").max(255),
@@ -66,9 +64,7 @@ export const contractorCreateSchema = z.object({
 
 export const contractorUpdateSchema = contractorCreateSchema.partial();
 
-// ===================================================
-// TYP DOKUMENTU
-// ===================================================
+// --- TYP DOKUMENTU ---
 
 export const documentTypeCreateSchema = z.object({
   name: z.string().trim().min(1, "Nazwa typu jest wymagana").max(100),
@@ -81,9 +77,7 @@ export const documentTypeUpdateSchema = documentTypeCreateSchema.pick({
   name: true,
 });
 
-// ===================================================
-// KATEGORIA
-// ===================================================
+// --- KATEGORIA ---
 
 export const categoryCreateSchema = z.object({
   name: z.string().trim().min(1, "Nazwa kategorii jest wymagana").max(100),
@@ -92,9 +86,7 @@ export const categoryCreateSchema = z.object({
 
 export const categoryUpdateSchema = categoryCreateSchema.partial();
 
-// ===================================================
-// DOKUMENT (FAKTURA)
-// ===================================================
+// --- DOKUMENT ---
 
 const documentFormFields = {
   invoiceNumber: z.string().trim().min(1, "Numer faktury jest wymagany").max(50),
@@ -148,6 +140,11 @@ export const documentFormSchema = z
   .object(documentFormFields)
   .superRefine(validateDocumentValues);
 
+// .strictObject() blokuje pola systemowe (source, status, ksefNumber)
+export const manualDocumentCreateSchema = z
+  .strictObject(documentFormFields)
+  .superRefine(validateDocumentValues);
+
 export const documentCreateSchema = z
   .object({
     ...documentFormFields,
@@ -157,8 +154,6 @@ export const documentCreateSchema = z
   })
   .superRefine(validateDocumentValues);
 
-// PUT dokumentu wymaga pełnego zestawu pól edytowalnych, dzięki czemu reguły
-// między polami są identyczne podczas tworzenia i edycji.
 export const documentUpdateSchema = documentFormSchema;
 
 export const pdfUploadSchema = documentFormSchema;
@@ -201,9 +196,14 @@ export const documentListQuerySchema = z
     }
   });
 
-// ===================================================
-// KSeF POBIERANIE
-// ===================================================
+export const bufferListQuerySchema = z
+  .object({
+    cursor: cuidSchema.optional(),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  })
+  .strict();
+
+// --- KSeF POBIERANIE ---
 
 export const ksefFetchSchema = z
   .object({
@@ -223,10 +223,7 @@ export const ksefFetchSchema = z
   });
 
 const ksefPartySchema = z.object({
-  nip: z
-    .string()
-    .trim()
-    .regex(/^\d{10}$/, "NIP kontrahenta musi składać się z 10 cyfr"),
+  nip: nipSchema,
   name: z.string().trim().min(1, "Nazwa kontrahenta jest wymagana").max(255),
   address: z.string().max(500).optional(),
   countryCode: z.string().length(2).optional(),
@@ -280,19 +277,18 @@ export const ksefInvoiceBatchSchema = z
   .array(ksefInvoiceSchema)
   .max(1_000, "Batch KSeF może zawierać maksymalnie 1000 dokumentów");
 
-// ===================================================
-// AKCEPTACJA Z BUFORA
-// ===================================================
+// --- AKCEPTACJA Z BUFORA ---
 
 export const acceptDocumentsSchema = z.object({
   documentIds: z
     .array(z.string().cuid())
-    .min(1, "Wybierz co najmniej jeden dokument do akceptacji"),
+    .min(1, "Wybierz co najmniej jeden dokument do akceptacji")
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Lista dokumentów zawiera powtórzone identyfikatory",
+    }),
 });
 
-// ===================================================
-// HARMONOGRAM KSeF
-// ===================================================
+// --- HARMONOGRAM KSeF ---
 
 export const ksefScheduleSchema = z.object({
   hour: z.number().int().min(0).max(23, "Godzina: 0-23"),
@@ -301,9 +297,7 @@ export const ksefScheduleSchema = z.object({
   fetchType: z.enum(["COST", "SALES", "BOTH"]).default("BOTH"),
 });
 
-// ===================================================
-// KONFIGURACJA KOLUMN
-// ===================================================
+// --- KONFIGURACJA KOLUMN ---
 
 export const columnConfigUpdateSchema = z.object({
   columns: z.array(
@@ -315,15 +309,12 @@ export const columnConfigUpdateSchema = z.object({
   ),
 });
 
-// ===================================================
-// TYPY
-// ===================================================
+// --- TYPY ---
 
 export type ContractorCreate = z.infer<typeof contractorCreateSchema>;
-export type DocumentCreate = z.infer<typeof documentCreateSchema>;
+export type ManualDocumentCreate = z.infer<typeof manualDocumentCreateSchema>;
 export type DocumentUpdate = z.infer<typeof documentUpdateSchema>;
 export type DocumentListQuery = z.infer<typeof documentListQuerySchema>;
+export type BufferListQuery = z.infer<typeof bufferListQuerySchema>;
 export type CategoryCreate = z.infer<typeof categoryCreateSchema>;
 export type KSeFFetchParams = z.infer<typeof ksefFetchSchema>;
-export type AcceptDocuments = z.infer<typeof acceptDocumentsSchema>;
-export type KSeFScheduleInput = z.infer<typeof ksefScheduleSchema>;

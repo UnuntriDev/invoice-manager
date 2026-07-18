@@ -39,20 +39,19 @@ const validPdfData = {
   bankAccountNumber: "",
 };
 
+const pdfBytes = Uint8Array.from(Buffer.from("%PDF-1.4\n%%EOF", "ascii"));
 const pdfFile = {
   name: "invoice.pdf",
   type: "application/pdf",
-  size: 4,
-  arrayBuffer: jest
-    .fn()
-    .mockResolvedValue(new Uint8Array([1, 2, 3, 4]).buffer),
+  size: pdfBytes.byteLength,
+  arrayBuffer: jest.fn().mockResolvedValue(pdfBytes.buffer),
 } as unknown as File;
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockCreateAttachmentLocation.mockReturnValue({
     fileName: "generated.pdf",
-    filePath: "C:\\uploads\\generated.pdf",
+    fileKey: "generated.pdf",
   });
   mockWriteAttachment.mockResolvedValue(undefined);
   mockRemoveAttachmentIfExists.mockResolvedValue(true);
@@ -89,7 +88,7 @@ describe("upload file/database consistency", () => {
 
     expect(mockWriteAttachment).toHaveBeenCalled();
     expect(mockRemoveAttachmentIfExists).toHaveBeenCalledWith(
-      "C:\\uploads\\generated.pdf"
+      "generated.pdf"
     );
   });
 
@@ -106,7 +105,7 @@ describe("upload file/database consistency", () => {
       "[attachment-cleanup-failed]",
       expect.objectContaining({
         operation: "rollback-upload-after-database-error",
-        filePath: "C:\\uploads\\generated.pdf",
+        filePath: "generated.pdf",
       })
     );
     errorSpy.mockRestore();

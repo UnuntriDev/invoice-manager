@@ -29,7 +29,7 @@ describe("parseKSeFXml", () => {
 
   it("parses seller data", () => {
     const result = parseKSeFXml(sampleXml);
-    expect(result.seller.nip).toBe("5213000000");
+    expect(result.seller.nip).toBe("5213000009");
     expect(result.seller.name).toBe("PackPol Sp. z o.o.");
   });
 
@@ -84,5 +84,32 @@ describe("parseKSeFXml", () => {
   it("throws on missing seller", () => {
     const xml = '<?xml version="1.0"?><Faktura><Naglowek/></Faktura>';
     expect(() => parseKSeFXml(xml)).toThrow("Podmiot1");
+  });
+
+  it("parses the FA(2) variant with namespaces", () => {
+    const fa2 = sampleXml
+      .replace("FA (3)", "FA (2)")
+      .replace("<WariantFormularza>3", "<WariantFormularza>2")
+      .replace("2023/06/29/12648", "2022/05/05/10591");
+
+    expect(parseKSeFXml(fa2)).toMatchObject({
+      schemaVersion: 2,
+      invoiceNumber: "FV/2026/07/001",
+    });
+  });
+
+  it.each([
+    ["DTD", '<!DOCTYPE Faktura [<!ELEMENT Faktura ANY>]>'],
+    ["entity", '<!DOCTYPE Faktura [<!ENTITY bomb "1234567890">]>'],
+  ])("rejects XML containing %s declarations", (_label, declaration) => {
+    const unsafe = sampleXml.replace(
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<?xml version="1.0" encoding="UTF-8"?>${declaration}`,
+    );
+
+    expect(() => parseKSeFXml(unsafe)).toThrow(
+      "Deklaracje DTD i encje XML nie są dozwolone",
+    );
+    expect(isKSeFXml(unsafe)).toBe(false);
   });
 });

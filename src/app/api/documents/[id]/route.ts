@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { documentUpdateSchema } from "@/lib/validators/schemas";
 import * as documentService from "@/lib/services/document.service";
-import { successResponse, errorResponse } from "@/lib/api-utils";
+import { successResponse, errorResponse, validateCuid } from "@/lib/api-utils";
 
 export async function GET(
   _request: NextRequest,
@@ -9,9 +9,13 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const document = await documentService.getDocument(id);
     if (!document) {
-      return errorResponse({ code: "P2025" } as Error & { code: string });
+      return errorResponse(
+        Object.assign(new Error("Nie znaleziono dokumentu"), { code: "P2025" }),
+      );
     }
     return successResponse(document);
   } catch (error) {
@@ -25,6 +29,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const body = await request.json();
     const validated = documentUpdateSchema.parse(body);
     const document = await documentService.updateDocument(id, validated);
@@ -40,6 +46,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     await documentService.deleteDocument(id);
     return successResponse({ deleted: true });
   } catch (error) {

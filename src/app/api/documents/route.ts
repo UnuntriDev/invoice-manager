@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import {
-  documentCreateSchema,
+  manualDocumentCreateSchema,
   documentListQuerySchema,
 } from "@/lib/validators/schemas";
 import * as documentService from "@/lib/services/document.service";
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const validated = documentCreateSchema.parse(body);
+    const validated = manualDocumentCreateSchema.parse(body);
     const document = await documentService.createDocument(validated);
     return successResponse(document, 201);
   } catch (error) {

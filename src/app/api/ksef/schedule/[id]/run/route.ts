@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { successResponse, errorResponse } from "@/lib/api-utils";
+import { successResponse, errorResponse, validateCuid } from "@/lib/api-utils";
 import { executeKSeFSchedule } from "@/lib/services/schedule-runner.service";
 
 export async function POST(
@@ -9,6 +9,8 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const schedule = await prisma.kSeFSchedule.findUnique({ where: { id } });
     if (!schedule) {
       return NextResponse.json(

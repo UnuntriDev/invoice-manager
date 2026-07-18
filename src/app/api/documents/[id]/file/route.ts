@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as documentService from "@/lib/services/document.service";
 import { readAttachment } from "@/lib/storage/attachment-storage";
 import { logMissingAttachment } from "@/lib/storage/attachment-logger";
+import { validateCuid } from "@/lib/api-utils";
 
 export async function GET(
   _request: NextRequest,
@@ -9,19 +10,21 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const document = await documentService.getDocument(id);
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
+    const document = await documentService.getDocumentAttachment(id);
 
     if (!document) {
       return NextResponse.json({ error: "Nie znaleziono dokumentu" }, { status: 404 });
     }
 
-    if (!document.filePath) {
+    if (!document.fileKey) {
       return NextResponse.json({ error: "Dokument nie ma załączonego pliku" }, { status: 404 });
     }
 
-    const fileBuffer = await readAttachment(document.filePath);
+    const fileBuffer = await readAttachment(document.fileKey);
     if (!fileBuffer) {
-      logMissingAttachment(id, document.filePath);
+      logMissingAttachment(id, document.fileKey);
       return NextResponse.json(
         { error: "Plik załącznika nie istnieje" },
         { status: 404 }

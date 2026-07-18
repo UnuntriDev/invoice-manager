@@ -7,7 +7,7 @@ import {
   getPreviousCalendarDate,
 } from "@/lib/cron/timezone";
 
-const LOCK_TTL_MS = 30 * 60 * 1000;
+export const LOCK_TTL_MS = 30 * 60 * 1000;
 
 export type ScheduleDefinition = Pick<
   KSeFSchedule,
@@ -37,6 +37,44 @@ interface RunnerDependencies {
   now?: () => Date;
   createLockToken?: () => string;
   fetch?: typeof fetchFromKSeF;
+  heartbeatIntervalMs?: number;
+}
+
+function startLeaseHeartbeat(
+  scheduleId: string,
+  lockToken: string,
+  now: () => Date,
+  intervalMs: number,
+) {
+  let failure: Error | null = null;
+  let inFlight = Promise.resolve();
+  const renew = async () => {
+    if (failure) return;
+    const renewed = await prisma.kSeFSchedule.updateMany({
+      where: { id: scheduleId, lockToken },
+      data: { lockedAt: now() },
+    });
+    if (renewed.count !== 1) {
+      failure = new Error("Utracono blokadę harmonogramu podczas wykonania");
+    }
+  };
+  const timer = setInterval(() => {
+    inFlight = inFlight.then(renew).catch((error: unknown) => {
+      failure = error instanceof Error ? error : new Error(String(error));
+    });
+  }, intervalMs);
+  timer.unref?.();
+
+  return {
+    async checkpoint() {
+      await inFlight;
+      if (failure) throw failure;
+    },
+    async stop() {
+      clearInterval(timer);
+      await inFlight;
+    },
+  };
 }
 
 function getFetchTypes(fetchType: string): Array<"COST" | "SALES"> {
@@ -94,30 +132,30 @@ export async function executeKSeFSchedule(
     };
   }
 
+  const heartbeat = startLeaseHeartbeat(
+    schedule.id,
+    lockToken,
+    now,
+    dependencies.heartbeatIntervalMs ?? Math.floor(LOCK_TTL_MS / 3),
+  );
+
   const results: Array<{ type: "COST" | "SALES" } & KSeFImportResult> = [];
 
   try {
     const dateRange = getDateRange(schedule, startedAt);
     const types = getFetchTypes(schedule.fetchType);
 
-    for (const [index, type] of types.entries()) {
-      if (index > 0) {
-        const renewed = await prisma.kSeFSchedule.updateMany({
-          where: { id: schedule.id, lockToken },
-          data: { lockedAt: now() },
-        });
-        if (renewed.count !== 1) {
-          throw new Error("Utracono blokadę harmonogramu podczas wykonania");
-        }
-      }
-
+    for (const type of types) {
+      await heartbeat.checkpoint();
       const result = await fetch({ ...dateRange, type });
+      await heartbeat.checkpoint();
       results.push({ type, ...result });
       if (!result.success) {
         throw new Error(`KSeF ${type}: ${result.error}`);
       }
     }
 
+    await heartbeat.stop();
     const completedAt = now();
     const completed = await prisma.kSeFSchedule.updateMany({
       where: { id: schedule.id, lockToken },
@@ -130,11 +168,12 @@ export async function executeKSeFSchedule(
       },
     });
     if (completed.count !== 1) {
-      throw new Error("Nie udało się zatwierdzić wykonania — blokada wygasła");
+      throw new Error("Nie udało się zatwierdzić wykonania: blokada wygasła");
     }
 
     return { status: "success", scheduleId: schedule.id, completedAt, results };
   } catch (error) {
+    await heartbeat.stop();
     const message = getErrorMessage(error);
     const failedAt = now();
 
@@ -149,7 +188,7 @@ export async function executeKSeFSchedule(
         },
       });
       if (persisted.count !== 1) {
-        console.error("[CRON] Nie zapisano błędu — runner utracił blokadę", {
+        console.error("[CRON] Nie zapisano błędu: runner utracił blokadę", {
           scheduleId: schedule.id,
           error: message,
         });

@@ -29,6 +29,6 @@ export function startCronWorker() {
   );
 
   console.log(
-    `[CRON] KSeF worker started — timezone ${CRON_TIME_ZONE}, checking every minute`
+    `[CRON] KSeF worker started, timezone ${CRON_TIME_ZONE}, checking every minute`
   );
 }

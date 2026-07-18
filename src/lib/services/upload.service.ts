@@ -1,39 +1,46 @@
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { parseKSeFXml, isKSeFXml } from "@/lib/ksef/xml-parser";
-import { DuplicateError } from "./document.service";
+import { parseKSeFXml } from "@/lib/ksef/xml-parser";
+import { DuplicateError } from "@/lib/errors/validation-errors";
 import {
   documentCreateSchema,
   nipSchema,
   pdfUploadSchema,
 } from "@/lib/validators/schemas";
 import { parseMoney } from "@/lib/money";
-import { getUploadFileValidationError } from "@/lib/validators/upload";
+import {
+  getMaxUploadSizeBytes,
+  getUploadFileValidationError,
+} from "@/lib/validators/upload";
+import { validateUploadBuffer } from "@/lib/validators/upload-content";
 import {
   createAttachmentLocation,
   removeAttachmentIfExists,
   writeAttachment,
 } from "@/lib/storage/attachment-storage";
 import { logAttachmentCleanupError } from "@/lib/storage/attachment-logger";
+import { ValidationError } from "@/lib/errors/validation-errors";
+import { getCompanyNip } from "@/lib/env";
+
+export { ValidationError } from "@/lib/errors/validation-errors";
 
 async function persistDocumentWithAttachment<T>(
-  filePath: string,
+  fileKey: string,
   buffer: Buffer,
   createRecord: (transaction: Prisma.TransactionClient) => Promise<T>
 ): Promise<T> {
-  // Zapis pliku poprzedza jakikolwiek zapis w bazie. Jeżeli ten krok zawiedzie,
-  // callback transakcji nie zostanie uruchomiony.
-  await writeAttachment(filePath, buffer);
+  // Plik przed DB: błąd tutaj = brak zapisu w bazie
+  await writeAttachment(fileKey, buffer);
 
   try {
     return await prisma.$transaction(createRecord);
   } catch (error) {
     try {
-      await removeAttachmentIfExists(filePath);
+      await removeAttachmentIfExists(fileKey);
     } catch (cleanupError) {
       logAttachmentCleanupError(
         "rollback-upload-after-database-error",
-        filePath,
+        fileKey,
         cleanupError
       );
     }
@@ -50,49 +57,90 @@ function isUniqueConstraintError(error: unknown): boolean {
 }
 
 export async function handleUpload(file: File, overrides?: Record<string, string>) {
-  const fileValidationError = getUploadFileValidationError(file);
+  const maxSizeBytes = getMaxUploadSizeBytes();
+  const fileValidationError = getUploadFileValidationError(file, maxSizeBytes);
   if (fileValidationError) {
     throw new ValidationError(fileValidationError);
   }
 
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
-  const ext = file.type.includes("xml") ? ".xml" : ".pdf";
-  const { fileName, filePath } = createAttachmentLocation(ext);
+  let validatedFile: ReturnType<typeof validateUploadBuffer>;
+  try {
+    validatedFile = validateUploadBuffer(file, buffer, maxSizeBytes);
+  } catch (error) {
+    throw new ValidationError(
+      error instanceof Error ? error.message : "Nieprawidłowy plik",
+    );
+  }
+  const ext = validatedFile.kind === "xml" ? ".xml" : ".pdf";
+  const { fileName, fileKey } = createAttachmentLocation(ext);
 
-  if (file.type.includes("xml")) {
-    return handleXmlUpload(buffer, fileName, filePath);
+  if (validatedFile.kind === "xml") {
+    return handleXmlUpload(
+      buffer,
+      validatedFile.xmlContent!,
+      fileName,
+      fileKey,
+    );
   }
 
-  return handlePdfUpload(buffer, fileName, filePath, overrides);
+  return handlePdfUpload(buffer, fileName, fileKey, overrides);
 }
 
-async function handleXmlUpload(buffer: Buffer, fileName: string, filePath: string) {
-  const content = buffer.toString("utf-8");
-
-  if (!isKSeFXml(content)) {
-    throw new ValidationError("Nie udało się sparsować pliku XML. Sprawdź czy to prawidłowa faktura KSeF.");
+async function handleXmlUpload(
+  buffer: Buffer,
+  content: string,
+  fileName: string,
+  fileKey: string,
+) {
+  let parsed: ReturnType<typeof parseKSeFXml>;
+  try {
+    parsed = parseKSeFXml(content);
+  } catch (error) {
+    throw new ValidationError(
+      error instanceof Error
+        ? error.message
+        : "Nie udało się sparsować pliku XML",
+    );
   }
-
-  const parsed = parseKSeFXml(content);
 
   const sellerNip = nipSchema.safeParse(parsed.seller.nip);
   if (!sellerNip.success) {
     throw new ValidationError("Brak poprawnego NIP sprzedawcy w pliku XML");
   }
+  const buyerNip = nipSchema.safeParse(parsed.buyer.nip);
+  if (!buyerNip.success) {
+    throw new ValidationError("Brak poprawnego NIP nabywcy w pliku XML");
+  }
+
+  const companyNip = getCompanyNip();
+  const companyIsSeller = sellerNip.data === companyNip;
+  const companyIsBuyer = buyerNip.data === companyNip;
+  if (companyIsSeller === companyIsBuyer) {
+    throw new ValidationError(
+      companyIsSeller
+        ? "NIP firmy występuje jednocześnie jako sprzedawca i nabywca"
+        : "NIP firmy nie występuje jako sprzedawca ani nabywca dokumentu",
+    );
+  }
+
+  const counterparty = companyIsSeller ? parsed.buyer : parsed.seller;
+  const counterpartyNip = companyIsSeller ? buyerNip.data : sellerNip.data;
+  const direction = companyIsSeller ? "RECEIVABLE" : "PAYABLE";
 
   try {
     return await persistDocumentWithAttachment(
-      filePath,
+      fileKey,
       buffer,
       async (transaction) => {
         const contractor = await transaction.contractor.upsert({
-          where: { nip: sellerNip.data },
+          where: { nip: counterpartyNip },
           update: {},
           create: {
-            name: parsed.seller.name,
-            nip: sellerNip.data,
-            address: parsed.seller.address,
+            name: counterparty.name,
+            nip: counterpartyNip,
+            address: counterparty.address,
           },
         });
 
@@ -110,18 +158,20 @@ async function handleXmlUpload(buffer: Buffer, fileName: string, filePath: strin
           );
         }
 
-        const costType = await transaction.documentType.findFirst({
-          where: { direction: "PAYABLE", isSystem: true },
+        const documentType = await transaction.documentType.findFirst({
+          where: { direction, isSystem: true },
         });
-        if (!costType) {
+        if (!documentType) {
           throw new ValidationError(
-            "Brak systemowego typu dokumentu dla faktur kosztowych"
+            `Brak systemowego typu dokumentu dla faktur ${
+              direction === "PAYABLE" ? "kosztowych" : "sprzedażowych"
+            }`,
           );
         }
 
         const documentData = documentCreateSchema.safeParse({
           invoiceNumber: parsed.invoiceNumber,
-          documentTypeId: costType.id,
+          documentTypeId: documentType.id,
           contractorId: contractor.id,
           issueDate: parsed.issueDate,
           dueDate: parsed.dueDate || parsed.issueDate,
@@ -157,7 +207,7 @@ async function handleXmlUpload(buffer: Buffer, fileName: string, filePath: strin
             source: "UPLOAD",
             status: "BUFFER",
             fileName,
-            filePath,
+            fileKey,
             fileType: "application/xml",
             xmlData: JSON.parse(JSON.stringify(parsed)),
           },
@@ -179,7 +229,7 @@ async function handleXmlUpload(buffer: Buffer, fileName: string, filePath: strin
   }
 }
 
-async function handlePdfUpload(buffer: Buffer, fileName: string, filePath: string, overrides?: Record<string, string>) {
+async function handlePdfUpload(buffer: Buffer, fileName: string, fileKey: string, overrides?: Record<string, string>) {
   const validation = pdfUploadSchema.safeParse(overrides ?? {});
   if (!validation.success) {
     throw new ValidationError(
@@ -190,7 +240,7 @@ async function handlePdfUpload(buffer: Buffer, fileName: string, filePath: strin
 
   try {
     return await persistDocumentWithAttachment(
-      filePath,
+      fileKey,
       buffer,
       async (transaction) => {
         const existing = await transaction.document.findUnique({
@@ -231,7 +281,7 @@ async function handlePdfUpload(buffer: Buffer, fileName: string, filePath: strin
             source: "UPLOAD",
             status: "BUFFER",
             fileName,
-            filePath,
+            fileKey,
             fileType: "application/pdf",
           },
           include: {
@@ -249,12 +299,5 @@ async function handlePdfUpload(buffer: Buffer, fileName: string, filePath: strin
       );
     }
     throw error;
-  }
-}
-
-export class ValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ValidationError";
   }
 }

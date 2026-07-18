@@ -2,21 +2,15 @@ import { randomUUID } from "crypto";
 import { promises as fs, type Dirent } from "fs";
 import path from "path";
 
-const uploadRoot = path.resolve(
-  /*turbopackIgnore: true*/ process.env.UPLOAD_DIR || "./uploads"
-);
-const trashRoot = path.join(/*turbopackIgnore: true*/ uploadRoot, ".trash");
-
-export interface StagedAttachment {
-  originalPath: string;
-  stagedPath: string;
-}
-
 export interface AttachmentReconciliationReport {
   deletedOrphans: string[];
-  restoredStaged: string[];
-  deletedStaged: string[];
-  errors: Array<{ filePath: string; error: unknown }>;
+  errors: Array<{ fileKey: string; error: unknown }>;
+}
+
+function getUploadRoot(): string {
+  return path.resolve(
+    /*turbopackIgnore: true*/ process.env.UPLOAD_DIR || "./uploads",
+  );
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -28,17 +22,27 @@ function isMissingFileError(error: unknown): boolean {
   );
 }
 
-function isAlreadyExistsError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "EEXIST"
-  );
+export function normalizeAttachmentKey(fileKey: string): string {
+  const normalized = fileKey.trim();
+  if (
+    normalized.length === 0 ||
+    normalized === "." ||
+    normalized === ".." ||
+    path.isAbsolute(normalized) ||
+    normalized !== path.basename(normalized) ||
+    normalized.includes("/") ||
+    normalized.includes("\\")
+  ) {
+    throw new Error("Nieprawidłowy klucz załącznika");
+  }
+
+  return normalized;
 }
 
-function resolveStoragePath(filePath: string): string {
-  const resolved = path.resolve(/*turbopackIgnore: true*/ filePath);
+export function resolveAttachmentPath(fileKey: string): string {
+  const key = normalizeAttachmentKey(fileKey);
+  const uploadRoot = getUploadRoot();
+  const resolved = path.resolve(/*turbopackIgnore: true*/ uploadRoot, key);
   const relative = path.relative(uploadRoot, resolved);
 
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -48,30 +52,29 @@ function resolveStoragePath(filePath: string): string {
   return resolved;
 }
 
-export function normalizeAttachmentPath(filePath: string): string {
-  return resolveStoragePath(filePath);
-}
-
 export function createAttachmentLocation(extension: ".pdf" | ".xml") {
   const fileName = `${randomUUID()}${extension}`;
-  return {
-    fileName,
-    filePath: path.join(/*turbopackIgnore: true*/ uploadRoot, fileName),
-  };
+  return { fileName, fileKey: fileName };
 }
 
 export async function writeAttachment(
-  filePath: string,
-  contents: Buffer
+  fileKey: string,
+  contents: Buffer,
 ): Promise<void> {
-  const resolved = resolveStoragePath(filePath);
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
-  await fs.writeFile(resolved, contents, { flag: "wx" });
+  const resolved = resolveAttachmentPath(fileKey);
+  await fs.mkdir(/* turbopackIgnore: true */ path.dirname(resolved), {
+    recursive: true,
+  });
+  await fs.writeFile(/* turbopackIgnore: true */ resolved, contents, {
+    flag: "wx",
+  });
 }
 
-export async function readAttachment(filePath: string): Promise<Buffer | null> {
+export async function readAttachment(fileKey: string): Promise<Buffer | null> {
   try {
-    return await fs.readFile(resolveStoragePath(filePath));
+    return await fs.readFile(
+      /* turbopackIgnore: true */ resolveAttachmentPath(fileKey),
+    );
   } catch (error) {
     if (isMissingFileError(error)) return null;
     throw error;
@@ -79,10 +82,12 @@ export async function readAttachment(filePath: string): Promise<Buffer | null> {
 }
 
 export async function removeAttachmentIfExists(
-  filePath: string
+  fileKey: string,
 ): Promise<boolean> {
   try {
-    await fs.unlink(resolveStoragePath(filePath));
+    await fs.unlink(
+      /* turbopackIgnore: true */ resolveAttachmentPath(fileKey),
+    );
     return true;
   } catch (error) {
     if (isMissingFileError(error)) return false;
@@ -90,68 +95,37 @@ export async function removeAttachmentIfExists(
   }
 }
 
-export async function stageAttachmentForDeletion(
-  filePath: string
-): Promise<StagedAttachment | null> {
-  const originalPath = resolveStoragePath(filePath);
-  const stagedPath = path.join(
-    /*turbopackIgnore: true*/ trashRoot,
-    `${randomUUID()}-${path.basename(originalPath)}`
+async function isOlderThan(fileKey: string, cutoff: number): Promise<boolean> {
+  const stats = await fs.stat(
+    /* turbopackIgnore: true */ resolveAttachmentPath(fileKey),
   );
-
-  await fs.mkdir(trashRoot, { recursive: true });
-  try {
-    await fs.rename(originalPath, stagedPath);
-    return { originalPath, stagedPath };
-  } catch (error) {
-    if (isMissingFileError(error)) return null;
-    throw error;
-  }
-}
-
-export async function restoreStagedAttachment(
-  attachment: StagedAttachment
-): Promise<void> {
-  await fs.rename(
-    resolveStoragePath(attachment.stagedPath),
-    resolveStoragePath(attachment.originalPath)
-  );
-}
-
-export async function finalizeStagedAttachment(
-  attachment: StagedAttachment
-): Promise<void> {
-  await removeAttachmentIfExists(attachment.stagedPath);
-}
-
-async function isOlderThan(filePath: string, cutoff: number): Promise<boolean> {
-  const stats = await fs.stat(filePath);
   return stats.mtimeMs <= cutoff;
 }
 
 export async function reconcileAttachmentStorage(
-  referencedFilePaths: string[],
-  gracePeriodMs = 60 * 60 * 1000
+  referencedFileKeys: string[],
+  gracePeriodMs = 60 * 60 * 1000,
 ): Promise<AttachmentReconciliationReport> {
   const report: AttachmentReconciliationReport = {
     deletedOrphans: [],
-    restoredStaged: [],
-    deletedStaged: [],
     errors: [],
   };
   const referenced = new Set<string>();
-  for (const filePath of referencedFilePaths) {
+  for (const fileKey of referencedFileKeys) {
     try {
-      referenced.add(resolveStoragePath(filePath));
+      referenced.add(normalizeAttachmentKey(fileKey));
     } catch (error) {
-      report.errors.push({ filePath, error });
+      report.errors.push({ fileKey, error });
     }
   }
 
+  const uploadRoot = getUploadRoot();
   const cutoff = Date.now() - gracePeriodMs;
   let entries: Dirent[];
   try {
-    entries = await fs.readdir(uploadRoot, { withFileTypes: true });
+    entries = await fs.readdir(/* turbopackIgnore: true */ uploadRoot, {
+      withFileTypes: true,
+    });
   } catch (error) {
     if (isMissingFileError(error)) return report;
     throw error;
@@ -159,59 +133,16 @@ export async function reconcileAttachmentStorage(
 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    const filePath = path.join(
-      /*turbopackIgnore: true*/ uploadRoot,
-      entry.name
-    );
-    if (referenced.has(filePath)) continue;
+    const fileKey = entry.name;
+    if (referenced.has(fileKey)) continue;
 
     try {
-      if (!(await isOlderThan(filePath, cutoff))) continue;
-      if (await removeAttachmentIfExists(filePath)) {
-        report.deletedOrphans.push(filePath);
+      if (!(await isOlderThan(fileKey, cutoff))) continue;
+      if (await removeAttachmentIfExists(fileKey)) {
+        report.deletedOrphans.push(fileKey);
       }
     } catch (error) {
-      report.errors.push({ filePath, error });
-    }
-  }
-
-  let stagedEntries: Dirent[];
-  try {
-    stagedEntries = await fs.readdir(trashRoot, { withFileTypes: true });
-  } catch (error) {
-    if (isMissingFileError(error)) return report;
-    throw error;
-  }
-
-  for (const entry of stagedEntries) {
-    if (!entry.isFile()) continue;
-    const stagedPath = path.join(
-      /*turbopackIgnore: true*/ trashRoot,
-      entry.name
-    );
-
-    try {
-      if (!(await isOlderThan(stagedPath, cutoff))) continue;
-      const originalName = entry.name.replace(/^[0-9a-f-]{36}-/i, "");
-      const originalPath = path.join(
-        /*turbopackIgnore: true*/ uploadRoot,
-        originalName
-      );
-
-      if (referenced.has(originalPath)) {
-        try {
-          await fs.rename(stagedPath, originalPath);
-          report.restoredStaged.push(originalPath);
-        } catch (error) {
-          if (!isAlreadyExistsError(error)) throw error;
-          await removeAttachmentIfExists(stagedPath);
-          report.deletedStaged.push(stagedPath);
-        }
-      } else if (await removeAttachmentIfExists(stagedPath)) {
-        report.deletedStaged.push(stagedPath);
-      }
-    } catch (error) {
-      report.errors.push({ filePath: stagedPath, error });
+      report.errors.push({ fileKey, error });
     }
   }
 

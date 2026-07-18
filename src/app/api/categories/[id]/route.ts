@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { categoryUpdateSchema } from "@/lib/validators/schemas";
 import * as categoryService from "@/lib/services/category.service";
-import { successResponse, errorResponse } from "@/lib/api-utils";
+import { successResponse, errorResponse, validateCuid } from "@/lib/api-utils";
 
 export async function PUT(
   request: NextRequest,
@@ -9,6 +9,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const body = await request.json();
     const validated = categoryUpdateSchema.parse(body);
     const category = await categoryService.updateCategory(id, validated);
@@ -24,6 +26,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     await categoryService.deleteCategory(id);
     return successResponse({ deleted: true });
   } catch (error) {

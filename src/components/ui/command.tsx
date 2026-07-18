@@ -5,13 +5,6 @@ import { Command as CommandPrimitive } from "cmdk"
 
 import { cn } from "@/lib/utils"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
   InputGroup,
   InputGroupAddon,
 } from "@/components/ui/input-group"
@@ -38,31 +31,50 @@ function CommandDialog({
   description = "Search for a command to run...",
   children,
   className,
-  showCloseButton = false,
-  ...props
-}: Omit<React.ComponentProps<typeof Dialog>, "children"> & {
+  open,
+  onOpenChange,
+}: {
   title?: string
   description?: string
   className?: string
-  showCloseButton?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   children: React.ReactNode
 }) {
+  React.useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onOpenChange?.(false);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onOpenChange]);
+
+  if (!open) return null;
+
   return (
-    <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
-      <DialogContent
+    <div className="fixed inset-0 z-50">
+      <div
+        className="fixed inset-0 bg-black/10 supports-backdrop-filter:backdrop-blur-xs"
+        onClick={() => onOpenChange?.(false)}
+      />
+      <div
+        data-slot="dialog-content"
+        role="dialog"
+        aria-label={title}
+        aria-describedby={undefined}
         className={cn(
-          "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
+          "fixed top-1/3 left-1/2 z-50 w-full max-w-[calc(100%-2rem)] -translate-x-1/2 overflow-hidden rounded-xl bg-popover p-0 text-sm text-popover-foreground ring-1 ring-foreground/10 shadow-lg sm:max-w-sm animate-in fade-in-0 zoom-in-95",
           className
         )}
-        showCloseButton={showCloseButton}
       >
+        <span className="sr-only">{description}</span>
         {children}
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   )
 }
 

@@ -7,7 +7,10 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { executeKSeFSchedule } from "@/lib/services/schedule-runner.service";
+import {
+  executeKSeFSchedule,
+  LOCK_TTL_MS,
+} from "@/lib/services/schedule-runner.service";
 
 const fixedNow = new Date("2026-07-15T08:00:00.000Z");
 const baseSchedule = {
@@ -162,5 +165,34 @@ describe("distributed KSeF schedule execution", () => {
       dateTo: "2026-07-15",
       type: "COST",
     });
+  });
+
+  it("renews the lease while one fetch lasts longer than the lock TTL", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    let nowCalls = 0;
+    const now = () =>
+      new Date(fixedNow.getTime() + nowCalls++ * (LOCK_TTL_MS + 1_000));
+    const fetch = jest.fn(
+      () =>
+        new Promise<typeof successResult>((resolve) => {
+          setTimeout(() => resolve(successResult), 30);
+        }),
+    );
+
+    const result = await executeKSeFSchedule(baseSchedule, {
+      now,
+      createLockToken: () => "long-running-lock",
+      heartbeatIntervalMs: 5,
+      fetch,
+    });
+
+    expect(result.status).toBe("success");
+    const heartbeatCalls = mockUpdateMany.mock.calls.filter(
+      ([query]) =>
+        query.where?.lockToken === "long-running-lock" &&
+        query.data?.lockedAt instanceof Date &&
+        query.data.lockedAt.getTime() > fixedNow.getTime() + LOCK_TTL_MS,
+    );
+    expect(heartbeatCalls.length).toBeGreaterThan(0);
   });
 });

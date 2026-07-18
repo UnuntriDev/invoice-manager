@@ -1,5 +1,6 @@
 const mockDocument = {
   findMany: jest.fn(),
+  count: jest.fn(),
   findUnique: jest.fn(),
   create: jest.fn(),
   delete: jest.fn(),
@@ -10,19 +11,14 @@ const mockContractor = {
   findUnique: jest.fn(),
 };
 
+const mockAttachmentCleanupTask = {
+  upsert: jest.fn(),
+};
 const mockTransaction = jest.fn();
-const mockStageAttachmentForDeletion = jest.fn();
-const mockRestoreStagedAttachment = jest.fn();
-const mockFinalizeStagedAttachment = jest.fn();
-const mockReadAttachment = jest.fn();
-const mockWriteAttachment = jest.fn();
+const mockProcessAttachmentCleanupTask = jest.fn();
 
-jest.mock("@/lib/storage/attachment-storage", () => ({
-  stageAttachmentForDeletion: mockStageAttachmentForDeletion,
-  restoreStagedAttachment: mockRestoreStagedAttachment,
-  finalizeStagedAttachment: mockFinalizeStagedAttachment,
-  readAttachment: mockReadAttachment,
-  writeAttachment: mockWriteAttachment,
+jest.mock("@/lib/services/attachment-reconciliation.service", () => ({
+  processAttachmentCleanupTask: mockProcessAttachmentCleanupTask,
 }));
 
 jest.mock("@/lib/prisma", () => ({
@@ -36,7 +32,6 @@ jest.mock("@/lib/prisma", () => ({
 
 import {
   createDocument,
-  acceptDocuments,
   DuplicateError,
   deleteDocument,
   listAcceptedDocuments,
@@ -53,18 +48,25 @@ const baseDocData = {
   amountVat: "230.00",
   amountGross: "1230.00",
   bankAccountNumber: "",
-  source: "MANUAL" as const,
-  status: "ACCEPTED" as const,
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockTransaction.mockImplementation(
-    async (callback: (transaction: { document: typeof mockDocument }) => unknown) =>
-      callback({ document: mockDocument })
+    async (
+      callback: (transaction: {
+        document: typeof mockDocument;
+        attachmentCleanupTask: typeof mockAttachmentCleanupTask;
+      }) => unknown,
+    ) =>
+      callback({
+        document: mockDocument,
+        attachmentCleanupTask: mockAttachmentCleanupTask,
+      }),
   );
-  mockReadAttachment.mockResolvedValue(Buffer.from("attachment"));
-  mockWriteAttachment.mockResolvedValue(undefined);
+  mockAttachmentCleanupTask.upsert.mockResolvedValue({ id: "cleanup-1" });
+  mockProcessAttachmentCleanupTask.mockResolvedValue(true);
+  mockDocument.count.mockResolvedValue(0);
 });
 
 describe("listAcceptedDocuments", () => {
@@ -93,6 +95,7 @@ describe("listAcceptedDocuments", () => {
       { id: "doc-2" },
       { id: "doc-3" },
     ]);
+    mockDocument.count.mockResolvedValue(42);
 
     const result = await listAcceptedDocuments(
       documentListQuerySchema.parse({ pageSize: "2" })
@@ -104,9 +107,15 @@ describe("listAcceptedDocuments", () => {
         take: 3,
       })
     );
+    expect(mockDocument.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "ACCEPTED" }),
+      })
+    );
     expect(result).toEqual({
       items: [{ id: "doc-1" }, { id: "doc-2" }],
       nextCursor: "doc-2",
+      total: 42,
     });
   });
 
@@ -206,6 +215,15 @@ describe("createDocument", () => {
       },
     });
     expect(result.id).toBe("doc-1");
+    expect(mockDocument.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          source: "MANUAL",
+          status: "ACCEPTED",
+          ksefNumber: null,
+        }),
+      }),
+    );
   });
 
   it("throws DuplicateError when document already exists", async () => {
@@ -251,126 +269,58 @@ describe("createDocument", () => {
   });
 });
 
-describe("acceptDocuments", () => {
-  it("updates documents from BUFFER to ACCEPTED", async () => {
-    mockDocument.updateMany.mockResolvedValue({ count: 3 });
-
-    const count = await acceptDocuments(["id-1", "id-2", "id-3"]);
-
-    expect(count).toBe(3);
-    expect(mockDocument.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: { in: ["id-1", "id-2", "id-3"] },
-        status: "BUFFER",
-      },
-      data: { status: "ACCEPTED" },
-    });
-  });
-
-  it("returns 0 when no documents match", async () => {
-    mockDocument.updateMany.mockResolvedValue({ count: 0 });
-
-    const count = await acceptDocuments(["nonexistent"]);
-
-    expect(count).toBe(0);
-  });
-});
-
 describe("deleteDocument", () => {
-  const stagedAttachment = {
-    originalPath: "C:\\uploads\\invoice.pdf",
-    stagedPath: "C:\\uploads\\.trash\\invoice.pdf",
-  };
-
-  it("deletes the attachment and database record as one coordinated operation", async () => {
-    mockDocument.findUnique.mockResolvedValue({
-      filePath: stagedAttachment.originalPath,
-    });
-    mockStageAttachmentForDeletion.mockResolvedValue(stagedAttachment);
+  it("commits a durable cleanup task before touching storage", async () => {
+    mockDocument.findUnique.mockResolvedValue({ fileKey: "invoice.pdf" });
     mockDocument.delete.mockResolvedValue({ id: "doc-1" });
-    mockFinalizeStagedAttachment.mockResolvedValue(undefined);
+    mockTransaction.mockImplementationOnce(async (callback) => {
+      const result = await callback({
+        document: mockDocument,
+        attachmentCleanupTask: mockAttachmentCleanupTask,
+      });
+      expect(mockAttachmentCleanupTask.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { fileKey: "invoice.pdf" },
+          create: { fileKey: "invoice.pdf" },
+        }),
+      );
+      expect(mockProcessAttachmentCleanupTask).not.toHaveBeenCalled();
+      return result;
+    });
 
     await expect(deleteDocument("doc-1")).resolves.toEqual({ id: "doc-1" });
 
     expect(mockDocument.delete).toHaveBeenCalledWith({ where: { id: "doc-1" } });
-    expect(mockFinalizeStagedAttachment).toHaveBeenCalledWith(stagedAttachment);
-    expect(mockRestoreStagedAttachment).not.toHaveBeenCalled();
+    expect(mockProcessAttachmentCleanupTask).toHaveBeenCalledWith("invoice.pdf");
   });
 
-  it("restores the staged file when deleting the database record fails", async () => {
+  it("does not touch storage when the database transaction fails", async () => {
     const databaseError = new Error("database unavailable");
-    mockDocument.findUnique.mockResolvedValue({
-      filePath: stagedAttachment.originalPath,
-    });
-    mockStageAttachmentForDeletion.mockResolvedValue(stagedAttachment);
+    mockDocument.findUnique.mockResolvedValue({ fileKey: "invoice.pdf" });
     mockDocument.delete.mockRejectedValue(databaseError);
 
     await expect(deleteDocument("doc-1")).rejects.toBe(databaseError);
-
-    expect(mockFinalizeStagedAttachment).not.toHaveBeenCalled();
-    expect(mockRestoreStagedAttachment).toHaveBeenCalledWith(stagedAttachment);
+    expect(mockProcessAttachmentCleanupTask).not.toHaveBeenCalled();
   });
 
-  it("recreates the original attachment from memory when a staged restore is impossible", async () => {
-    const databaseError = new Error("commit failed");
-    mockDocument.findUnique.mockResolvedValue({
-      filePath: stagedAttachment.originalPath,
-    });
-    mockStageAttachmentForDeletion.mockResolvedValue(stagedAttachment);
-    mockDocument.delete.mockRejectedValue(databaseError);
-    mockRestoreStagedAttachment.mockRejectedValue(
-      Object.assign(new Error("staged file missing"), { code: "ENOENT" })
-    );
-    mockReadAttachment
-      .mockResolvedValueOnce(Buffer.from("attachment"))
-      .mockResolvedValueOnce(null);
-
-    await expect(deleteDocument("doc-1")).rejects.toBe(databaseError);
-
-    expect(mockWriteAttachment).toHaveBeenCalledWith(
-      stagedAttachment.originalPath,
-      Buffer.from("attachment")
-    );
-  });
-
-  it("rolls back the database operation and restores the file when final cleanup fails", async () => {
-    const cleanupError = new Error("filesystem unavailable");
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
-    mockDocument.findUnique.mockResolvedValue({
-      filePath: stagedAttachment.originalPath,
-    });
-    mockStageAttachmentForDeletion.mockResolvedValue(stagedAttachment);
+  it("keeps a committed delete when immediate cleanup is deferred", async () => {
+    mockDocument.findUnique.mockResolvedValue({ fileKey: "invoice.pdf" });
     mockDocument.delete.mockResolvedValue({ id: "doc-1" });
-    mockFinalizeStagedAttachment.mockRejectedValue(cleanupError);
+    mockProcessAttachmentCleanupTask.mockResolvedValue(false);
 
-    await expect(deleteDocument("doc-1")).rejects.toBe(cleanupError);
-
-    expect(mockRestoreStagedAttachment).toHaveBeenCalledWith(stagedAttachment);
-    expect(errorSpy).toHaveBeenCalledWith(
-      "[attachment-cleanup-failed]",
-      expect.objectContaining({
-        operation: "finalize-document-attachment-delete",
-      })
-    );
-    errorSpy.mockRestore();
+    await expect(deleteDocument("doc-1")).resolves.toEqual({ id: "doc-1" });
+    expect(mockAttachmentCleanupTask.upsert).toHaveBeenCalled();
   });
 
-  it("deletes a stale database record when its attachment is already missing", async () => {
-    const warningSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockDocument.findUnique.mockResolvedValue({
-      filePath: stagedAttachment.originalPath,
-    });
-    mockStageAttachmentForDeletion.mockResolvedValue(null);
+  it("deletes a document without an attachment without creating a task", async () => {
+    mockDocument.findUnique.mockResolvedValue({ fileKey: null });
     mockDocument.delete.mockResolvedValue({ id: "doc-1" });
 
     await expect(deleteDocument("doc-1")).resolves.toEqual({ id: "doc-1" });
 
-    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockTransaction).toHaveBeenCalled();
     expect(mockDocument.delete).toHaveBeenCalledWith({ where: { id: "doc-1" } });
-    expect(warningSpy).toHaveBeenCalledWith(
-      "[attachment-missing]",
-      expect.objectContaining({ documentId: "doc-1" })
-    );
-    warningSpy.mockRestore();
+    expect(mockAttachmentCleanupTask.upsert).not.toHaveBeenCalled();
+    expect(mockProcessAttachmentCleanupTask).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { successResponse, errorResponse } from "@/lib/api-utils";
+import { successResponse, errorResponse, validateCuid } from "@/lib/api-utils";
 import { documentTypeUpdateSchema } from "@/lib/validators/schemas";
 
 export async function PUT(
@@ -9,6 +9,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const body = await request.json();
     const validated = documentTypeUpdateSchema.parse(body);
     const type = await prisma.documentType.update({
@@ -27,6 +29,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const docType = await prisma.documentType.findUnique({
       where: { id },
       include: { _count: { select: { documents: true } } },

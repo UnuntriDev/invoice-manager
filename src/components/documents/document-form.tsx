@@ -2,9 +2,11 @@
 
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNotifications } from "@/components/notification-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -30,25 +32,14 @@ import { toast } from "sonner";
 import type { DocumentRow } from "./document-columns";
 import { documentFormSchema, type DocumentUpdate } from "@/lib/validators/schemas";
 import type { z } from "zod";
-import { addMoney } from "@/lib/money";
-
-interface CategoryNode {
-  id: string;
-  name: string;
-  parentId: string | null;
-  children?: CategoryNode[];
-}
-
-function flattenCategories(cats: CategoryNode[], depth = 0): { id: string; name: string; depth: number }[] {
-  const result: { id: string; name: string; depth: number }[] = [];
-  for (const cat of cats) {
-    result.push({ id: cat.id, name: cat.name, depth });
-    if (cat.children?.length) {
-      result.push(...flattenCategories(cat.children, depth + 1));
-    }
-  }
-  return result;
-}
+import {
+  calculateGrossFromRate,
+  calculateVatAmount,
+  inferVatRate,
+  parsePercentage,
+} from "@/lib/money";
+import { flattenCategories } from "@/lib/categories";
+import { formatZonedIsoDate } from "@/lib/cron/timezone";
 
 type FormValues = z.input<typeof documentFormSchema>;
 
@@ -58,14 +49,56 @@ interface Props {
   editDocument?: DocumentRow | null;
 }
 
+function getInitialVatRate(editDocument?: DocumentRow | null) {
+  if (!editDocument) return { value: "23", error: null as string | null };
+  try {
+    return {
+      value: inferVatRate(
+        String(editDocument.amountNet),
+        String(editDocument.amountVat),
+      ),
+      error: null as string | null,
+    };
+  } catch {
+    return {
+      value: "",
+      error: "Nie można wyznaczyć stawki VAT z zapisanych kwot",
+    };
+  }
+}
+
 export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
+  const initialVatRate = getInitialVatRate(editDocument);
+  const [vatRate, setVatRate] = useState(initialVatRate.value);
+  const [vatRateError, setVatRateError] = useState<string | null>(
+    initialVatRate.error,
+  );
   const { data: docTypes } = useDocumentTypes();
   const { data: contractors } = useContractors();
   const { data: categories } = useCategories();
   const createDoc = useCreateDocument();
   const updateDoc = useUpdateDocument();
+  const { add: addNotification } = useNotifications();
 
-  const flatCats = categories ? flattenCategories(categories) : [];
+  const flatCats = useMemo(
+    () => (categories ? flattenCategories(categories) : []),
+    [categories],
+  );
+
+  const docTypeItems = useMemo(
+    () => Object.fromEntries(docTypes?.map((t: { id: string; name: string }) => [t.id, t.name]) ?? []),
+    [docTypes],
+  );
+
+  const contractorItems = useMemo(
+    () => Object.fromEntries(contractors?.map((c: { id: string; name: string }) => [c.id, c.name]) ?? []),
+    [contractors],
+  );
+
+  const categoryItems = useMemo(
+    () => ({ __none__: "Brak kategorii", ...Object.fromEntries(flatCats.map((c) => [c.id, c.label])) }),
+    [flatCats],
+  );
 
   const {
     register,
@@ -78,29 +111,37 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
     resolver: zodResolver(documentFormSchema),
   });
 
-  const [amountNet, amountVat, documentTypeId, contractorId, categoryId] =
+  const [amountNet, documentTypeId, contractorId, categoryId, issueDate, dueDate] =
     useWatch({
       control,
       name: [
         "amountNet",
-        "amountVat",
         "documentTypeId",
         "contractorId",
         "categoryId",
+        "issueDate",
+        "dueDate",
       ],
     });
 
-  useEffect(() => {
-    if (amountNet && amountVat) {
-      try {
-        setValue("amountGross", addMoney(amountNet, amountVat), {
-          shouldValidate: true,
-        });
-      } catch {
-        // Resolver pokaże błąd przy polu źródłowym.
-      }
+  function recalculateAmounts(netValue: string, rateValue: string) {
+    try {
+      parsePercentage(rateValue);
+      setValue("amountVat", calculateVatAmount(netValue, rateValue), {
+        shouldValidate: true,
+      });
+      setValue("amountGross", calculateGrossFromRate(netValue, rateValue), {
+        shouldValidate: true,
+      });
+      setVatRateError(null);
+    } catch (error) {
+      setValue("amountVat", "", { shouldValidate: true });
+      setValue("amountGross", "", { shouldValidate: true });
+      setVatRateError(
+        error instanceof Error ? error.message : "Nieprawidłowa stawka VAT",
+      );
     }
-  }, [amountNet, amountVat, setValue]);
+  }
 
   useEffect(() => {
     if (editDocument) {
@@ -122,7 +163,7 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
         invoiceNumber: "",
         documentTypeId: "",
         contractorId: "",
-        issueDate: new Date().toISOString().split("T")[0],
+        issueDate: formatZonedIsoDate(new Date()),
         dueDate: "",
         amountNet: "0.00",
         amountVat: "0.00",
@@ -138,13 +179,11 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
       if (editDocument) {
         await updateDoc.mutateAsync({ id: editDocument.id, data: values });
         toast.success("Dokument zaktualizowany");
+        addNotification({ title: "Dokument zaktualizowany", description: values.invoiceNumber ?? "" });
       } else {
-        await createDoc.mutateAsync({
-          ...values,
-          source: "MANUAL",
-          status: "ACCEPTED",
-        });
+        await createDoc.mutateAsync(values);
         toast.success("Dokument dodany do rejestru");
+        addNotification({ title: "Dokument dodany do rejestru", description: values.invoiceNumber ?? "" });
       }
       onClose();
     } catch (error) {
@@ -152,32 +191,43 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
     }
   }
 
+  function handleClose() {
+    onClose();
+  }
+
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-[500px] overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle>{editDocument ? "Edytuj dokument" : "Dodaj dokument"}</SheetTitle>
+    <Sheet open={open} onOpenChange={(v) => !v && handleClose()}>
+      <SheetContent className="w-[500px] gap-0 overflow-y-auto sm:max-w-lg">
+        <SheetHeader className="border-b px-5 py-4 pr-14">
+          <SheetTitle className="whitespace-nowrap text-lg font-semibold tracking-tight">
+            {editDocument ? "Edytuj dokument" : "Dodaj dokument"}
+          </SheetTitle>
         </SheetHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-4 px-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 px-5 py-4">
           <div className="space-y-1">
-            <Label>Numer faktury</Label>
-            <Input {...register("invoiceNumber")} />
+            <Label htmlFor="document-invoice-number">Numer faktury <span className="text-destructive">*</span></Label>
+            <Input
+              id="document-invoice-number"
+              aria-invalid={Boolean(errors.invoiceNumber)}
+              aria-describedby={errors.invoiceNumber ? "document-invoice-number-error" : undefined}
+              {...register("invoiceNumber")}
+            />
             {errors.invoiceNumber && (
-              <p className="text-xs text-destructive">{errors.invoiceNumber.message}</p>
+              <p id="document-invoice-number-error" className="text-xs text-destructive">{errors.invoiceNumber.message}</p>
             )}
           </div>
 
           <div className="space-y-1">
-            <Label>Typ dokumentu</Label>
+            <Label htmlFor="document-type">Typ dokumentu <span className="text-destructive">*</span></Label>
             <Select
               value={documentTypeId || null}
               onValueChange={(v) => setValue("documentTypeId", v ?? "", { shouldValidate: true })}
-              items={Object.fromEntries(docTypes?.map((t: { id: string; name: string }) => [t.id, t.name]) ?? [])}
+              items={docTypeItems}
             >
-              <SelectTrigger>
+              <SelectTrigger id="document-type" className="w-full" aria-invalid={Boolean(errors.documentTypeId)}>
                 <SelectValue placeholder="Wybierz typ" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="w-max min-w-(--anchor-width)">
                 {docTypes?.map((t: { id: string; name: string }) => (
                   <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                 ))}
@@ -189,13 +239,13 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
           </div>
 
           <div className="space-y-1">
-            <Label>Kontrahent</Label>
+            <Label htmlFor="document-contractor">Kontrahent <span className="text-destructive">*</span></Label>
             <Select
               value={contractorId || null}
               onValueChange={(v) => setValue("contractorId", v ?? "", { shouldValidate: true })}
-              items={Object.fromEntries(contractors?.map((c: { id: string; name: string }) => [c.id, c.name]) ?? [])}
+              items={contractorItems}
             >
-              <SelectTrigger>
+              <SelectTrigger id="document-contractor" className="w-full" aria-invalid={Boolean(errors.contractorId)}>
                 <SelectValue placeholder="Wybierz kontrahenta" />
               </SelectTrigger>
               <SelectContent>
@@ -211,68 +261,138 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Data wystawienia</Label>
-              <Input type="date" {...register("issueDate")} />
+              <Label htmlFor="document-issue-date">Data wystawienia <span className="text-destructive">*</span></Label>
+              <DateInput
+                id="document-issue-date"
+                value={issueDate || ""}
+                onChange={(v) => setValue("issueDate", v, { shouldValidate: true })}
+              />
               {errors.issueDate && (
                 <p className="text-xs text-destructive">{errors.issueDate.message}</p>
               )}
             </div>
             <div className="space-y-1">
-              <Label>Termin płatności</Label>
-              <Input type="date" {...register("dueDate")} />
+              <Label htmlFor="document-due-date">Termin płatności <span className="text-destructive">*</span></Label>
+              <DateInput
+                id="document-due-date"
+                value={dueDate || ""}
+                onChange={(v) => setValue("dueDate", v, { shouldValidate: true })}
+              />
               {errors.dueDate && (
                 <p className="text-xs text-destructive">{errors.dueDate.message}</p>
               )}
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1">
-              <Label>Netto</Label>
-              <Input type="number" step="0.01" {...register("amountNet")} />
+              <Label htmlFor="document-amount-net">Netto <span className="text-destructive">*</span></Label>
+              <Input
+                id="document-amount-net"
+                type="text"
+                inputMode="decimal"
+                placeholder="0,00"
+                {...register("amountNet", {
+                  onChange: (event) =>
+                    recalculateAmounts(
+                      event.target.value,
+                      vatRate,
+                    ),
+                })}
+              />
               {errors.amountNet && (
                 <p className="text-xs text-destructive">{errors.amountNet.message}</p>
               )}
             </div>
             <div className="space-y-1">
-              <Label>VAT</Label>
-              <Input type="number" step="0.01" {...register("amountVat")} />
-              {errors.amountVat && (
-                <p className="text-xs text-destructive">{errors.amountVat.message}</p>
+              <Label htmlFor="document-vat-rate">
+                VAT (%) <span className="text-destructive">*</span>
+              </Label>
+              <div className="relative">
+                <Input
+                  id="document-vat-rate"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="23"
+                  required
+                  className="pr-8 tabular-nums"
+                  value={vatRate}
+                  onChange={(event) => {
+                    setVatRate(event.target.value);
+                    recalculateAmounts(amountNet || "", event.target.value);
+                  }}
+                />
+                <span
+                  className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm text-muted-foreground"
+                  aria-hidden="true"
+                >
+                  %
+                </span>
+              </div>
+              {vatRateError && (
+                <p className="text-xs text-destructive">{vatRateError}</p>
               )}
+              <input type="hidden" {...register("amountVat")} />
             </div>
             <div className="space-y-1">
-              <Label>Brutto</Label>
+              <Label htmlFor="document-amount-gross">Brutto <span className="text-destructive">*</span></Label>
               <Input
-                type="number"
-                step="0.01"
+                id="document-amount-gross"
+                type="text"
                 {...register("amountGross")}
                 readOnly
-                className="bg-muted"
+                className="bg-muted font-medium tabular-nums"
               />
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Kwota VAT i Brutto są wyliczane automatycznie na podstawie Netto i stawki VAT.
+          </p>
 
           <div className="space-y-1">
-            <Label>Numer rachunku bankowego</Label>
-            <Input {...register("bankAccountNumber")} placeholder="26 cyfr" />
+            <Label htmlFor="document-bank-account">Numer rachunku bankowego</Label>
+            <Input
+              id="document-bank-account"
+              {...register("bankAccountNumber")}
+              placeholder="00 0000 0000 0000 0000 0000 0000"
+              maxLength={32}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, "").slice(0, 26);
+                let fmt = digits.slice(0, 2);
+                for (let i = 2; i < digits.length; i += 4) {
+                  fmt += " " + digits.slice(i, i + 4);
+                }
+                setValue("bankAccountNumber", fmt);
+              }}
+            />
           </div>
 
           <div className="space-y-1">
-            <Label>Kategoria</Label>
+            <Label htmlFor="document-category">Kategoria</Label>
             <Select
               value={categoryId || null}
               onValueChange={(v) => setValue("categoryId", v === "__none__" ? null : v, { shouldValidate: true })}
-              items={{ __none__: "Brak kategorii", ...Object.fromEntries(flatCats.map((c) => [c.id, "  ".repeat(c.depth) + c.name])) }}
+              items={categoryItems}
             >
-              <SelectTrigger>
+              <SelectTrigger id="document-category" className="w-full">
                 <SelectValue placeholder="Brak kategorii" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                side="bottom"
+                align="start"
+                sideOffset={6}
+                collisionPadding={8}
+                collisionAvoidance={{
+                  side: "none",
+                  align: "shift",
+                  fallbackAxisSide: "none",
+                }}
+                className="max-h-[min(18rem,var(--available-height))] overscroll-contain"
+              >
                 <SelectItem value="__none__">Brak kategorii</SelectItem>
                 {flatCats.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {"  ".repeat(c.depth) + c.name}
+                    {c.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -280,7 +400,7 @@ export function DocumentFormSheet({ open, onClose, editDocument }: Props) {
           </div>
 
           <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={handleClose}>
               Anuluj
             </Button>
             <Button type="submit" disabled={createDoc.isPending || updateDoc.isPending}>

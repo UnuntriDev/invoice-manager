@@ -27,6 +27,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Plus, Pencil, Trash2, Clock, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -38,6 +44,8 @@ import {
 } from "@/lib/hooks/use-documents";
 import { ksefScheduleSchema } from "@/lib/validators/schemas";
 import { CRON_TIME_ZONE } from "@/lib/cron/timezone";
+import { QueryErrorState } from "@/components/query-error-state";
+import { useNotifications } from "@/components/notification-context";
 
 interface Schedule {
   id: string;
@@ -71,11 +79,19 @@ const fetchTypeLabels: Record<string, string> = {
 };
 
 export default function KSeFSettingsPage() {
-  const { data: schedules, isLoading } = useKSeFSchedules();
+  const {
+    data: schedules,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useKSeFSchedules();
   const createSchedule = useCreateSchedule();
   const updateSchedule = useUpdateSchedule();
   const deleteSchedule = useDeleteSchedule();
   const runSchedule = useRunSchedule();
+  const { add: addNotification } = useNotifications();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -118,9 +134,11 @@ export default function KSeFSettingsPage() {
       if (editId) {
         await updateSchedule.mutateAsync({ id: editId, data });
         toast.success("Harmonogram zaktualizowany");
+        addNotification({ title: "Harmonogram zaktualizowany", description: `${data.hour}:${String(data.minute).padStart(2, "0")}` });
       } else {
         await createSchedule.mutateAsync(data);
         toast.success("Harmonogram dodany");
+        addNotification({ title: "Harmonogram dodany", description: `${data.hour}:${String(data.minute).padStart(2, "0")}` });
       }
       setFormOpen(false);
     } catch (error) {
@@ -132,6 +150,7 @@ export default function KSeFSettingsPage() {
     try {
       await deleteSchedule.mutateAsync(id);
       toast.success("Harmonogram usunięty");
+      addNotification({ title: "Harmonogram usunięty", description: "" });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Błąd usuwania");
     }
@@ -153,6 +172,7 @@ export default function KSeFSettingsPage() {
       const result = (await runSchedule.mutateAsync(id)) as RunResult;
       if (result.status === "success") {
         toast.success("Harmonogram wykonany poprawnie");
+        addNotification({ title: "Harmonogram KSeF wykonany", description: "Pobieranie zakończone" });
       } else if (result.status === "skipped") {
         toast.info("Harmonogram jest już wykonywany lub jest nieaktywny");
       } else {
@@ -164,15 +184,15 @@ export default function KSeFSettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between border-b pb-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Harmonogram KSeF</h1>
-          <p className="text-sm text-muted-foreground">
-            Konfiguracja automatycznego pobierania faktur — strefa {CRON_TIME_ZONE}
+    <div className="flex flex-col gap-5 p-4 sm:p-6">
+      <div className="flex flex-col items-start justify-between gap-3 border-b pb-3 sm:flex-row sm:items-center">
+        <div className="space-y-0.5">
+          <h1 className="text-2xl leading-tight font-bold">Harmonogram KSeF</h1>
+          <p className="text-sm leading-5 text-muted-foreground">
+            Konfiguracja automatycznego pobierania faktur (strefa {CRON_TIME_ZONE})
           </p>
         </div>
-        <Button onClick={openNew}>
+        <Button className="h-10 px-4 text-sm transition-shadow duration-300 hover:shadow-[0_0_20px_2px_#009d6666]" onClick={openNew}>
           <Plus className="mr-2 h-4 w-4" />
           Dodaj harmonogram
         </Button>
@@ -184,6 +204,13 @@ export default function KSeFSettingsPage() {
             <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
+      ) : isError ? (
+        <QueryErrorState
+          title="Nie udało się pobrać harmonogramów"
+          error={error}
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
       ) : !schedules?.length ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <Clock className="mb-4 h-16 w-16" />
@@ -214,6 +241,7 @@ export default function KSeFSettingsPage() {
                     <Switch
                       checked={s.isActive}
                       onCheckedChange={() => handleToggle(s)}
+                      aria-label={`${s.isActive ? "Wyłącz" : "Włącz"} harmonogram ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`}
                     />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
@@ -221,47 +249,74 @@ export default function KSeFSettingsPage() {
                       ? scheduleDateFormatter.format(new Date(s.lastRunAt))
                       : "—"}
                   </TableCell>
-                  <TableCell className="max-w-72 text-sm text-destructive">
+                  <TableCell className="max-w-72 text-sm">
                     {s.lastError ? (
-                      <span title={s.lastError}>
+                      <span className="text-destructive" title={s.lastError}>
                         {s.lastError}
                         {s.lastErrorAt
                           ? ` (${scheduleDateFormatter.format(new Date(s.lastErrorAt))})`
                           : ""}
                       </span>
                     ) : (
-                      "—"
+                      <span className="text-muted-foreground">Brak</span>
                     )}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        aria-label="Uruchom ponownie"
-                        disabled={!s.isActive || runSchedule.isPending}
-                        onClick={() => handleRun(s.id)}
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => openEdit(s)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-destructive"
-                        onClick={() => handleDelete(s.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <TooltipProvider>
+                      <div className="flex gap-1">
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                aria-label={`Uruchom harmonogram ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`}
+                                disabled={!s.isActive || runSchedule.isPending}
+                                onClick={() => handleRun(s.id)}
+                              />
+                            }
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {s.isActive ? "Uruchom teraz" : "Harmonogram nieaktywny"}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => openEdit(s)}
+                                aria-label={`Edytuj harmonogram ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`}
+                              />
+                            }
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </TooltipTrigger>
+                          <TooltipContent>Edytuj</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-destructive"
+                                onClick={() => handleDelete(s.id)}
+                                aria-label={`Usuń harmonogram ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`}
+                              />
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </TooltipTrigger>
+                          <TooltipContent>Usuń</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TooltipProvider>
                   </TableCell>
                 </TableRow>
               ))}
@@ -271,39 +326,49 @@ export default function KSeFSettingsPage() {
       )}
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-xs">
           <DialogHeader>
             <DialogTitle>
               {editId ? "Edytuj harmonogram" : "Nowy harmonogram"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Godzina (0-23)</Label>
+            <div className="space-y-1">
+              <Label htmlFor="schedule-hour">Godzina</Label>
+              <div className="flex items-center gap-1">
                 <Input
+                  id="schedule-hour"
                   type="number"
                   min={0}
                   max={23}
-                  value={hour}
-                  onChange={(e) => setHour(parseInt(e.target.value) || 0)}
+                  className="w-16 text-center font-mono"
+                  value={String(hour).padStart(2, "0")}
+                  onChange={(e) => {
+                    const v = Math.max(0, Math.min(23, Number(e.target.value) || 0));
+                    setHour(v);
+                  }}
                 />
-              </div>
-              <div className="space-y-1">
-                <Label>Minuta (0-59)</Label>
+                <span className="text-lg font-semibold">:</span>
                 <Input
+                  id="schedule-minute"
+                  aria-label="Minuta"
                   type="number"
                   min={0}
                   max={59}
-                  value={minute}
-                  onChange={(e) => setMinute(parseInt(e.target.value) || 0)}
+                  step={5}
+                  className="w-16 text-center font-mono"
+                  value={String(minute).padStart(2, "0")}
+                  onChange={(e) => {
+                    const v = Math.max(0, Math.min(59, Number(e.target.value) || 0));
+                    setMinute(v);
+                  }}
                 />
               </div>
             </div>
             <div className="space-y-1">
-              <Label>Typ faktur</Label>
-              <Select value={fetchType} onValueChange={(v) => setFetchType(v ?? "BOTH")}>
-                <SelectTrigger>
+              <Label htmlFor="schedule-fetch-type">Typ faktur</Label>
+              <Select value={fetchType} onValueChange={(v) => setFetchType(v ?? "BOTH")} items={{ COST: "Kosztowe (zakup)", SALES: "Sprzedażowe", BOTH: "Oba typy" }}>
+                <SelectTrigger id="schedule-fetch-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -314,8 +379,8 @@ export default function KSeFSettingsPage() {
               </Select>
             </div>
             <div className="flex items-center gap-2">
-              <Switch checked={isActive} onCheckedChange={setIsActive} />
-              <Label>Aktywny</Label>
+              <Switch id="schedule-active" checked={isActive} onCheckedChange={setIsActive} />
+              <Label htmlFor="schedule-active">Aktywny</Label>
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setFormOpen(false)}>

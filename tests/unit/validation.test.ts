@@ -2,15 +2,25 @@ import {
   contractorCreateSchema,
   documentCreateSchema,
   documentListQuerySchema,
+  manualDocumentCreateSchema,
   documentUpdateSchema,
   moneySchema,
   pdfUploadSchema,
 } from "@/lib/validators/schemas";
-import { addMoney, formatCurrency } from "@/lib/money";
+import {
+  addMoney,
+  calculateGrossFromRate,
+  calculateVatAmount,
+  formatCurrency,
+  formatVatRate,
+  inferVatRate,
+  parsePercentage,
+} from "@/lib/money";
 import { formatDocumentDate, formatDocumentDateTime } from "@/lib/dates";
 import {
   getUploadFileValidationError,
-  MAX_UPLOAD_SIZE_BYTES,
+  DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+  getMaxUploadSizeBytes,
 } from "@/lib/validators/upload";
 
 const validDocument = {
@@ -34,6 +44,21 @@ describe("money validation and arithmetic", () => {
     expect(formatCurrency("1234567.80")).toBe("1 234 567,80 zł");
   });
 
+  it("calculates VAT amount and gross from a percentage rate", () => {
+    expect(calculateVatAmount("1000.00", "23")).toBe("230.00");
+    expect(calculateGrossFromRate("1000.00", "23")).toBe("1230.00");
+    expect(calculateGrossFromRate("0.10", "23")).toBe("0.12");
+    expect(inferVatRate("2970.00", "237.60")).toBe("8");
+    expect(formatVatRate("2970.00", "237.60")).toBe("8%");
+    expect(formatVatRate("1000.00", "85.50")).toBe("8,55%");
+  });
+
+  it("rejects invalid VAT percentage rates", () => {
+    expect(() => parsePercentage("101")).toThrow();
+    expect(() => parsePercentage("23.123")).toThrow();
+    expect(() => parsePercentage("abc")).toThrow();
+  });
+
   it("normalizes a valid amount to two decimal places", () => {
     expect(moneySchema.parse("12,5")).toBe("12.50");
   });
@@ -50,6 +75,19 @@ describe("money validation and arithmetic", () => {
   it("rejects JavaScript numbers at the API boundary", () => {
     expect(moneySchema.safeParse(0.1).success).toBe(false);
   });
+});
+
+describe("manual document API validation", () => {
+  it.each(["source", "status", "ksefNumber"])(
+    "rejects the system field %s",
+    (field) => {
+      const result = manualDocumentCreateSchema.safeParse({
+        ...validDocument,
+        [field]: field === "status" ? "BUFFER" : "forged",
+      });
+      expect(result.success).toBe(false);
+    },
+  );
 });
 
 describe("central document schemas", () => {
@@ -166,7 +204,7 @@ describe("upload file validation", () => {
   it("rejects a file larger than 10MB", () => {
     expect(
       getUploadFileValidationError({
-        size: MAX_UPLOAD_SIZE_BYTES + 1,
+        size: DEFAULT_MAX_UPLOAD_SIZE_BYTES + 1,
         type: "application/pdf",
       })
     ).toContain("za duży");
@@ -176,5 +214,17 @@ describe("upload file validation", () => {
     expect(
       getUploadFileValidationError({ size: 100, type: "image/png" })
     ).toBe("Dozwolone formaty to PDF i XML");
+  });
+
+  it("rejects an empty file", () => {
+    expect(
+      getUploadFileValidationError({ size: 0, type: "application/pdf" }),
+    ).toBe("Plik jest pusty");
+  });
+
+  it("uses and validates MAX_FILE_SIZE_MB", () => {
+    expect(getMaxUploadSizeBytes("2")).toBe(2 * 1024 * 1024);
+    expect(() => getMaxUploadSizeBytes("0")).toThrow("od 1 do 100");
+    expect(() => getMaxUploadSizeBytes("not-a-number")).toThrow("od 1 do 100");
   });
 });

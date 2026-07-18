@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { ksefScheduleSchema } from "@/lib/validators/schemas";
-import { successResponse, errorResponse } from "@/lib/api-utils";
+import { successResponse, errorResponse, validateCuid } from "@/lib/api-utils";
 
 export async function PUT(
   request: NextRequest,
@@ -9,6 +9,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     const body = await request.json();
     const validated = ksefScheduleSchema.parse(body);
     const schedule = await prisma.kSeFSchedule.update({
@@ -27,6 +29,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const invalid = validateCuid(id);
+    if (invalid) return invalid;
     await prisma.kSeFSchedule.delete({ where: { id } });
     return successResponse({ deleted: true });
   } catch (error) {

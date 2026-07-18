@@ -40,8 +40,7 @@ function removeBatchDuplicates(invoices: KSeFInvoice[], isCost: boolean) {
     const counterparty = getCounterparty(invoice, isCost);
     const businessKey = JSON.stringify([invoice.invoiceNumber, counterparty.nip]);
 
-    // Numer KSeF jest głównym kluczem idempotentności. Para numer faktury + NIP
-    // pozostaje dodatkowym kluczem biznesowym zgodnym z ograniczeniem w bazie.
+    // Deduplikacja: ksefNumber (główny) + invoiceNumber+NIP (biznesowy)
     if (
       seenKsefNumbers.has(invoice.ksefNumber) ||
       seenBusinessKeys.has(businessKey)
@@ -142,8 +141,7 @@ export async function importKSeFBatch(
           };
         });
 
-        // PostgreSQL realizuje skipDuplicates przez ON CONFLICT DO NOTHING.
-        // Obejmuje to numer KSeF, klucz biznesowy i duplikaty współbieżne.
+        // ON CONFLICT DO NOTHING (ksefNumber + klucz biznesowy)
         const created = await tx.document.createMany({
           data: documents,
           skipDuplicates: true,

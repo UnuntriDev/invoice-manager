@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import type { OnChangeFn, SortingState } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,18 +12,17 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   useDeleteDocument,
   useDocuments,
 } from "@/lib/hooks/use-documents";
+import { useNotifications } from "@/components/notification-context";
 import { DocumentDataTable } from "@/components/documents/data-table";
 import { DocumentFilters } from "@/components/documents/document-filters";
-import { ColumnConfigDialog } from "@/components/documents/column-config-dialog";
 import { DocumentFormSheet } from "@/components/documents/document-form";
 import { DocumentPreview } from "@/components/documents/document-preview";
 import type { DocumentRow } from "@/components/documents/document-columns";
@@ -38,7 +38,9 @@ const emptyFilters = {
   search: "",
 };
 
-export default function DocumentsPage() {
+function DocumentsPageContent() {
+  const searchParams = useSearchParams();
+  const pageRouter = useRouter();
   const [filters, setFilters] = useState(emptyFilters);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sorting, setSorting] = useState<SortingState>([
@@ -48,11 +50,17 @@ export default function DocumentsPage() {
     undefined,
   ]);
   const [pageIndex, setPageIndex] = useState(0);
-  const [formOpen, setFormOpen] = useState(false);
+  const actionAdd = searchParams.get("action") === "add";
+  const [formOpen, setFormOpen] = useState(actionAdd);
   const [editDoc, setEditDoc] = useState<DocumentRow | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRow | null>(null);
   const deleteDocument = useDeleteDocument();
+  const { add: addNotification } = useNotifications();
+
+  useEffect(() => {
+    if (actionAdd) pageRouter.replace("/documents");
+  }, [actionAdd, pageRouter]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -110,6 +118,7 @@ export default function DocumentsPage() {
     try {
       await deleteDocument.mutateAsync(deleteTarget.id);
       toast.success(`Usunięto dokument ${deleteTarget.invoiceNumber}`);
+      addNotification({ title: `Usunięto dokument`, description: deleteTarget.invoiceNumber });
       setDeleteTarget(null);
 
       if ((documents?.items.length ?? 0) === 1 && pageIndex > 0) {
@@ -126,16 +135,15 @@ export default function DocumentsPage() {
 
   return (
     <div className="flex flex-col gap-5 p-4 sm:gap-6 sm:p-6">
-      <div className="flex flex-col items-start justify-between gap-4 border-b pb-4 sm:flex-row sm:items-center sm:pb-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Rejestr dokumentów</h1>
-          <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col items-start justify-between gap-3 border-b pb-3 sm:flex-row sm:items-center">
+        <div className="space-y-0.5">
+          <h1 className="text-2xl leading-tight font-bold">Rejestr dokumentów</h1>
+          <p className="text-sm leading-5 text-muted-foreground">
             Zarządzaj fakturami i dokumentami księgowymi
           </p>
         </div>
         <div className="flex w-full items-center gap-2 sm:w-auto">
-          <ColumnConfigDialog />
-          <Button onClick={() => { setEditDoc(null); setFormOpen(true); }}>
+          <Button className="h-10 px-4 text-sm transition-shadow duration-300 hover:shadow-[0_0_20px_2px_#009d6666]" onClick={() => { setEditDoc(null); setFormOpen(true); }}>
             <Plus className="mr-2 h-4 w-4" />
             Dodaj dokument
           </Button>
@@ -148,6 +156,7 @@ export default function DocumentsPage() {
           setFilters(nextFilters);
           resetPagination();
         }}
+        resultCount={documents?.total ?? 0}
       />
 
       <DocumentDataTable
@@ -188,6 +197,7 @@ export default function DocumentsPage() {
       />
 
       <DocumentFormSheet
+        key={editDoc?.id ?? "new-document"}
         open={formOpen}
         onClose={() => { setFormOpen(false); setEditDoc(null); }}
         editDocument={editDoc}
@@ -212,17 +222,14 @@ export default function DocumentsPage() {
         }}
       >
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia className="bg-destructive/10 text-destructive">
-              <Trash2 className="size-5" aria-hidden="true" />
-            </AlertDialogMedia>
+          <AlertDialogHeader className="sm:place-items-center! sm:text-center!">
             <AlertDialogTitle>Usunąć dokument?</AlertDialogTitle>
             <AlertDialogDescription>
               Dokument &quot;{deleteTarget?.invoiceNumber}&quot; oraz jego
               załącznik zostaną trwale usunięte. Tej operacji nie można cofnąć.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="items-center sm:justify-center!">
             <AlertDialogCancel disabled={deleteDocument.isPending}>
               Anuluj
             </AlertDialogCancel>
@@ -237,5 +244,13 @@ export default function DocumentsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function DocumentsPage() {
+  return (
+    <Suspense fallback={null}>
+      <DocumentsPageContent />
+    </Suspense>
   );
 }

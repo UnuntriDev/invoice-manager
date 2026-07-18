@@ -42,10 +42,3 @@ export async function updateContractor(id: string, data: Partial<ContractorCreat
 export async function deleteContractor(id: string) {
   return prisma.contractor.delete({ where: { id } });
 }
-
-export async function findContractorByNip(nip: string) {
-  return prisma.contractor.findUnique({
-    where: { nip },
-    include: { defaultCategory: true },
-  });
-}

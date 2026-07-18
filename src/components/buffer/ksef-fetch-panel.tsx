@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -21,17 +21,20 @@ import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useKSeFetch } from "@/lib/hooks/use-documents";
 import { ksefFetchSchema } from "@/lib/validators/schemas";
+import { formatZonedIsoDate } from "@/lib/cron/timezone";
+import { useNotifications } from "@/components/notification-context";
 
 export function KSeFetchPanel() {
   const [open, setOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
-    return d.toISOString().split("T")[0];
+    return formatZonedIsoDate(d);
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split("T")[0]);
+  const [dateTo, setDateTo] = useState(() => formatZonedIsoDate(new Date()));
   const [type, setType] = useState<string>("COST");
   const fetchKSeF = useKSeFetch();
+  const { add: addNotification } = useNotifications();
 
   async function handleFetch() {
     const validation = ksefFetchSchema.safeParse({ dateFrom, dateTo, type });
@@ -42,10 +45,20 @@ export function KSeFetchPanel() {
 
     try {
       const result = await fetchKSeF.mutateAsync({ dateFrom, dateTo, type });
-      const parts: string[] = [];
-      if (result.imported > 0) parts.push(`Pobrano ${result.imported} faktur do bufora`);
-      if (result.skipped > 0) parts.push(`Pominięto ${result.skipped} duplikatów`);
-      toast.success(parts.join(". ") || "Brak nowych faktur");
+      const importedN = result.imported;
+      const skippedN = result.skipped;
+      if (importedN === 0 && skippedN === 0) {
+        toast.success("Brak nowych faktur");
+      } else {
+        const importLabel = importedN === 1 ? "fakturę" : importedN >= 2 && importedN <= 4 ? "faktury" : "faktur";
+        const skipLabel = skippedN === 1 ? "duplikat" : skippedN >= 2 && skippedN <= 4 ? "duplikaty" : "duplikatów";
+        const title = importedN > 0 ? `Pobrano ${importedN} ${importLabel} do bufora` : `Pominięto ${skippedN} ${skipLabel}`;
+        const desc = importedN > 0 && skippedN > 0 ? `Pominięto ${skippedN} ${skipLabel}` : undefined;
+        toast.success(title, { description: desc });
+        if (importedN > 0) {
+          addNotification({ title: `KSeF: pobrano ${importedN} ${importLabel}`, description: `Zakres: ${dateFrom} – ${dateTo}` });
+        }
+      }
       setOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Błąd pobierania z KSeF");
@@ -66,26 +79,30 @@ export function KSeFetchPanel() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Data od</Label>
-                <Input
-                  type="date"
+                <Label htmlFor="ksef-date-from">Data od</Label>
+                <DateInput
+                  id="ksef-date-from"
                   value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
+                  onChange={setDateFrom}
                 />
               </div>
               <div className="space-y-1">
-                <Label>Data do</Label>
-                <Input
-                  type="date"
+                <Label htmlFor="ksef-date-to">Data do</Label>
+                <DateInput
+                  id="ksef-date-to"
                   value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
+                  onChange={setDateTo}
                 />
               </div>
             </div>
             <div className="space-y-1">
-              <Label>Typ faktur</Label>
-              <Select value={type} onValueChange={(v) => setType(v ?? "COST")}>
-                <SelectTrigger>
+              <Label htmlFor="ksef-fetch-type">Typ faktur</Label>
+              <Select
+                value={type}
+                onValueChange={(v) => setType(v ?? "COST")}
+                items={{ COST: "Kosztowe (zakup)", SALES: "Sprzedażowe" }}
+              >
+                <SelectTrigger id="ksef-fetch-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

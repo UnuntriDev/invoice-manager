@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: invoices
+          POSTGRES_PASSWORD: invoices-ci
+          POSTGRES_DB: invoices
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U invoices -d invoices"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://invoices:invoices-ci@localhost:5432/invoices?schema=public
+      COMPANY_NIP: "9876543210"
+      KSEF_ENV: mock
+      KSEF_NIP: "9876543210"
+      KSEF_TOKEN: mock-token
+      CRON_SECRET: ci-only-secret
+      UPLOAD_DIR: ./uploads-ci
+      MAX_FILE_SIZE_MB: "10"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma migrate status
+      - run: npm run db:preflight
+      - run: npx prisma db seed
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test -- --runInBand
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: docker compose config --quiet
+      - run: docker build --target runner -t invoice-manager-ci .

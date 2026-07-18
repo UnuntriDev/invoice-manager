@@ -7,13 +7,21 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Ellipsis,
   Eye,
   Pencil,
   Trash2,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { formatCurrency } from "@/lib/money";
 import { formatDocumentDate } from "@/lib/dates";
-import { formatBankAccountNumber } from "@/lib/document-list-presentation";
+
 
 export interface DocumentRow {
   id: string;
@@ -46,31 +54,34 @@ export interface DocumentRow {
   ksefNumber: string | null;
   bankAccountNumber: string | null;
   fileName: string | null;
-  filePath: string | null;
   fileType: string | null;
-  xmlData: unknown | null;
   createdAt: string;
   updatedAt: string;
 }
 
-const badgeShape = "rounded-full border px-2.5 py-0.5 text-xs font-medium";
+export interface DocumentDetail extends DocumentRow {
+  xmlData: unknown | null;
+}
+
+const badgeShape =
+  "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-medium whitespace-nowrap";
 
 export const sourceBadge: Record<string, { label: string; className: string }> = {
   KSEF: {
     label: "KSeF",
-    className: `${badgeShape} border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-300`,
+    className: `${badgeShape} border-emerald-200 bg-emerald-50 text-emerald-700`,
   },
   UPLOAD: {
     label: "Upload",
-    className: `${badgeShape} border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300`,
+    className: `${badgeShape} border-slate-200 bg-slate-50 text-slate-600`,
   },
   MANUAL: {
     label: "Ręczny",
-    className: `${badgeShape} border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300`,
+    className: `${badgeShape} border-slate-200 bg-slate-50 text-slate-500`,
   },
 };
 
-const statusBadge: Record<string, { label: string; className: string }> = {
+export const statusBadge: Record<string, { label: string; className: string }> = {
   BUFFER: { label: "Bufor", className: `${badgeShape} bg-yellow-100 text-yellow-800 border-yellow-300` },
   ACCEPTED: { label: "Zaakceptowany", className: `${badgeShape} bg-green-100 text-green-800 border-green-300` },
 };
@@ -90,7 +101,7 @@ function SortableHeader({
     <Button
       type="button"
       variant="ghost"
-      className="-ml-3 h-8 text-xs uppercase tracking-wider"
+      className="-ml-3 h-8 text-xs font-semibold uppercase tracking-wider text-foreground/80 hover:text-foreground"
       onClick={() => column.toggleSorting(direction === "asc")}
       aria-label={`${label}. ${
         direction === "asc"
@@ -114,54 +125,54 @@ export function getColumns(
   return [
     {
       id: "actions",
-      header: () => <span className="sr-only">Akcje</span>,
-      size: 128,
+      header: () => (
+        <div className="flex justify-center">
+          <Pencil className="size-4" aria-hidden="true" />
+          <span className="sr-only">Akcje</span>
+        </div>
+      ),
+      size: 48,
+      minSize: 48,
+      maxSize: 48,
       cell: ({ row }) => {
         const invoiceNumber = row.original.invoiceNumber;
         return (
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-9 hover:text-primary"
-              aria-label={`Podgląd dokumentu ${invoiceNumber}`}
-              title="Podgląd"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPreview(row.original);
-              }}
-            >
-              <Eye className="h-5 w-5" aria-hidden="true" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-9 hover:text-primary"
-              aria-label={`Edytuj dokument ${invoiceNumber}`}
-              title="Edytuj"
-              onClick={(event) => {
-                event.stopPropagation();
-                onEdit(row.original);
-              }}
-            >
-              <Pencil className="size-4" aria-hidden="true" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-9 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              aria-label={`Usuń dokument ${invoiceNumber}`}
-              title="Usuń"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDelete(row.original);
-              }}
-            >
-              <Trash2 className="size-4" aria-hidden="true" />
-            </Button>
+          <div className="flex justify-center">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 hover:text-primary"
+                    aria-label={`Akcje dokumentu ${invoiceNumber}`}
+                    title="Akcje"
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                }
+              >
+                <Ellipsis className="size-4" aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-40">
+                <DropdownMenuItem onClick={() => onPreview(row.original)}>
+                  <Eye aria-hidden="true" />
+                  Podgląd
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onEdit(row.original)}>
+                  <Pencil aria-hidden="true" />
+                  Edytuj
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => onDelete(row.original)}
+                >
+                  <Trash2 aria-hidden="true" />
+                  Usuń
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         );
       },
@@ -230,7 +241,8 @@ export function getColumns(
           {formatCurrency(getValue<string>())}
         </div>
       ),
-      size: 120,
+      size: 128,
+      minSize: 128,
     },
     {
       id: "category",
@@ -269,7 +281,7 @@ export function getColumns(
     {
       accessorKey: "ksefNumber",
       header: "Numer KSeF",
-      cell: ({ getValue }) => formatBankAccountNumber(getValue<string | null>()),
+      cell: ({ getValue }) => getValue<string | null>() ?? "—",
       size: 180,
     },
     {

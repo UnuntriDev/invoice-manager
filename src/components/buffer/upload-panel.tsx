@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -17,52 +18,128 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Upload, FileUp, Loader2 } from "lucide-react";
+import { Upload, FileUp, Loader2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import {
   useUploadDocument,
+  useExtractPdfDocument,
   useDocumentTypes,
   useContractors,
+  useUploadConfig,
 } from "@/lib/hooks/use-documents";
 import { pdfUploadSchema } from "@/lib/validators/schemas";
-import { getUploadFileValidationError } from "@/lib/validators/upload";
+import {
+  DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+  getUploadFileValidationError,
+} from "@/lib/validators/upload";
+import {
+  calculateGrossFromRate,
+  calculateVatAmount,
+  inferVatRate,
+} from "@/lib/money";
+import { formatZonedIsoDate } from "@/lib/cron/timezone";
+import { createLatestTaskGuard } from "@/lib/pdf/latest-task-guard";
+import { useNotifications } from "@/components/notification-context";
+
+function createEmptyPdfFields() {
+  return {
+    invoiceNumber: "",
+    documentTypeId: "",
+    contractorId: "",
+    issueDate: formatZonedIsoDate(new Date()),
+    dueDate: "",
+    amountNet: "",
+    vatRate: "",
+    amountVat: "",
+    amountGross: "",
+  };
+}
 
 export function UploadPanel() {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [isPdf, setIsPdf] = useState(false);
-  const [pdfFields, setPdfFields] = useState({
-    invoiceNumber: "",
-    documentTypeId: "",
-    contractorId: "",
-    issueDate: new Date().toISOString().split("T")[0],
-    dueDate: "",
-    amountNet: "",
-    amountVat: "",
-    amountGross: "",
-  });
+  const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
+  const [pdfFields, setPdfFields] = useState(createEmptyPdfFields);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectionGuardRef = useRef(createLatestTaskGuard());
   const uploadDoc = useUploadDocument();
+  const { add: addNotification } = useNotifications();
+  const extractPdf = useExtractPdfDocument();
   const { data: docTypes } = useDocumentTypes();
   const { data: contractors } = useContractors();
+  const { data: uploadConfig } = useUploadConfig();
+  const maxUploadSizeBytes =
+    uploadConfig?.maxSizeBytes ?? DEFAULT_MAX_UPLOAD_SIZE_BYTES;
 
-  function handleFileSelect(f: File) {
-    const validationError = getUploadFileValidationError(f);
+  const docTypeItems = useMemo(
+    () => Object.fromEntries(docTypes?.map((t: { id: string; name: string }) => [t.id, t.name]) ?? []),
+    [docTypes],
+  );
+
+  const contractorItems = useMemo(
+    () => Object.fromEntries(contractors?.map((c: { id: string; name: string }) => [c.id, c.name]) ?? []),
+    [contractors],
+  );
+
+  const handleFileSelect = useCallback(async (f: File) => {
+    const selectionVersion = selectionGuardRef.current.begin();
+    const validationError = getUploadFileValidationError(f, maxUploadSizeBytes);
     if (validationError) {
       toast.error(validationError);
       return;
     }
     setFile(f);
-    setIsPdf(f.type === "application/pdf");
-  }
+    setPdfFields(createEmptyPdfFields());
+    setExtractionWarnings([]);
+    const selectedIsPdf =
+      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    setIsPdf(selectedIsPdf);
+
+    if (!selectedIsPdf) return;
+
+    try {
+      const result = await extractPdf.mutateAsync(f);
+      if (!selectionGuardRef.current.isCurrent(selectionVersion)) return;
+      setPdfFields(() => {
+        const next = { ...createEmptyPdfFields(), ...result.fields };
+        if (result.fields.amountNet && result.fields.amountVat) {
+          try {
+            next.vatRate = inferVatRate(
+              result.fields.amountNet,
+              result.fields.amountVat,
+            );
+            next.amountVat = calculateVatAmount(next.amountNet, next.vatRate);
+            next.amountGross = calculateGrossFromRate(next.amountNet, next.vatRate);
+          } catch {
+            next.vatRate = "";
+          }
+        }
+        return next;
+      });
+      setExtractionWarnings(result.warnings);
+      if (result.detected.length > 0) {
+        toast.success(`Automatycznie uzupełniono ${result.detected.length} pól`);
+      } else if (result.warnings.length > 0) {
+        toast.warning("Nie udało się automatycznie uzupełnić danych. Sprawdź formularz.");
+      }
+    } catch (error) {
+      if (!selectionGuardRef.current.isCurrent(selectionVersion)) return;
+      toast.warning(
+        error instanceof Error
+          ? `Nie udało się odczytać PDF: ${error.message}`
+          : "Nie udało się odczytać PDF. Uzupełnij dane ręcznie.",
+      );
+    }
+  }, [extractPdf, maxUploadSizeBytes]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
     if (f) handleFileSelect(f);
-  }, []);
+  }, [handleFileSelect]);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -94,6 +171,7 @@ export function UploadPanel() {
     try {
       await uploadDoc.mutateAsync(formData);
       toast.success("Dokument dodany do bufora");
+      addNotification({ title: "Dokument dodany do bufora", description: file?.name ?? "" });
       resetAndClose();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Błąd uploadu");
@@ -101,23 +179,35 @@ export function UploadPanel() {
   }
 
   function resetAndClose() {
+    selectionGuardRef.current.invalidate();
     setFile(null);
     setIsPdf(false);
-    setPdfFields({
-      invoiceNumber: "",
-      documentTypeId: "",
-      contractorId: "",
-      issueDate: new Date().toISOString().split("T")[0],
-      dueDate: "",
-      amountNet: "",
-      amountVat: "",
-      amountGross: "",
-    });
+    setExtractionWarnings([]);
+    setPdfFields(createEmptyPdfFields());
     setOpen(false);
   }
 
   function updatePdf(key: string, value: string) {
-    setPdfFields((prev) => ({ ...prev, [key]: value }));
+    setPdfFields((prev) => {
+      const next = { ...prev, [key]: value };
+
+      if (key === "amountNet" || key === "vatRate") {
+        if (next.amountNet && next.vatRate) {
+          try {
+            next.amountVat = calculateVatAmount(next.amountNet, next.vatRate);
+            next.amountGross = calculateGrossFromRate(next.amountNet, next.vatRate);
+          } catch {
+            next.amountVat = "";
+            next.amountGross = "";
+          }
+        } else {
+          next.amountVat = "";
+          next.amountGross = "";
+        }
+      }
+
+      return next;
+    });
   }
 
   return (
@@ -131,42 +221,34 @@ export function UploadPanel() {
           <DialogHeader>
             <DialogTitle>Upload dokumentu</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {!file ? (
-              <div
+              <button
+                type="button"
                 onDrop={onDrop}
                 onDragOver={onDragOver}
                 onDragLeave={onDragLeave}
                 onClick={() => inputRef.current?.click()}
-                className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
+                className={`flex min-h-40 w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors ${
                   dragOver
                     ? "border-primary bg-primary/5"
                     : "border-muted-foreground/25 hover:border-primary/50"
                 }`}
+                aria-label="Wybierz albo upuść plik PDF lub XML"
               >
                 <FileUp className="mb-3 h-10 w-10 text-muted-foreground" />
                 <p className="text-sm font-medium">
                   Przeciągnij plik lub kliknij
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  PDF lub XML (max 10MB)
+                  PDF lub XML (max {uploadConfig?.maxSizeMb ?? 10} MB)
                 </p>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept=".pdf,.xml,application/pdf,text/xml,application/xml"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleFileSelect(f);
-                  }}
-                />
-              </div>
+              </button>
             ) : (
-              <div className="flex items-center gap-3 rounded-lg border p-3">
-                <FileUp className="h-8 w-8 text-muted-foreground" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{file.name}</p>
+              <div className="flex w-full min-w-0 items-center gap-3 rounded-lg border p-3">
+                <FileUp className="h-8 w-8 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium" title={file.name}>{file.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {(file.size / 1024).toFixed(1)} KB · {file.type.includes("pdf") ? "PDF" : "XML"}
                   </p>
@@ -174,33 +256,80 @@ export function UploadPanel() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { setFile(null); setIsPdf(false); }}
+                  onClick={() => {
+                    selectionGuardRef.current.invalidate();
+                    setFile(null);
+                    setIsPdf(false);
+                    setExtractionWarnings([]);
+                    setPdfFields(createEmptyPdfFields());
+                    if (inputRef.current) inputRef.current.value = "";
+                  }}
                 >
                   Zmień
                 </Button>
               </div>
             )}
 
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".pdf,.xml,application/pdf,text/xml,application/xml"
+              className="sr-only"
+              aria-label="Plik dokumentu PDF lub XML"
+              onChange={(event) => {
+                const selectedFile = event.target.files?.[0];
+                if (selectedFile) void handleFileSelect(selectedFile);
+              }}
+            />
+
+            {file && isPdf && extractPdf.isPending && (
+              <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground" role="status">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Odczytywanie danych z dokumentu…
+              </div>
+            )}
+
             {file && isPdf && (
               <div className="space-y-3 rounded-lg border p-4">
                 <p className="text-sm font-medium text-muted-foreground">
-                  Plik PDF — uzupełnij dane ręcznie
+                  Plik PDF: sprawdź automatycznie uzupełnione dane
                 </p>
+                {extractionWarnings.length > 0 && (
+                  <div
+                    className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                    role="status"
+                  >
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                    <div>
+                      {extractionWarnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-1">
-                  <Label>Numer faktury *</Label>
+                  <Label htmlFor="upload-invoice-number">
+                    Numer faktury <span className="text-destructive" aria-hidden="true">*</span>
+                    <span className="sr-only">(pole wymagane)</span>
+                  </Label>
                   <Input
+                    id="upload-invoice-number"
+                    required
                     value={pdfFields.invoiceNumber}
                     onChange={(e) => updatePdf("invoiceNumber", e.target.value)}
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label>Typ dokumentu *</Label>
+                  <Label htmlFor="upload-document-type">
+                    Typ dokumentu <span className="text-destructive" aria-hidden="true">*</span>
+                    <span className="sr-only">(pole wymagane)</span>
+                  </Label>
                   <Select
                     value={pdfFields.documentTypeId || null}
                     onValueChange={(v) => updatePdf("documentTypeId", v ?? "")}
-                    items={Object.fromEntries(docTypes?.map((t: { id: string; name: string }) => [t.id, t.name]) ?? [])}
+                    items={docTypeItems}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="upload-document-type" aria-required="true">
                       <SelectValue placeholder="Wybierz typ" />
                     </SelectTrigger>
                     <SelectContent>
@@ -211,13 +340,16 @@ export function UploadPanel() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label>Kontrahent *</Label>
+                  <Label htmlFor="upload-contractor">
+                    Kontrahent <span className="text-destructive" aria-hidden="true">*</span>
+                    <span className="sr-only">(pole wymagane)</span>
+                  </Label>
                   <Select
                     value={pdfFields.contractorId || null}
                     onValueChange={(v) => updatePdf("contractorId", v ?? "")}
-                    items={Object.fromEntries(contractors?.map((c: { id: string; name: string }) => [c.id, c.name]) ?? [])}
+                    items={contractorItems}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="upload-contractor" aria-required="true">
                       <SelectValue placeholder="Wybierz kontrahenta" />
                     </SelectTrigger>
                     <SelectContent>
@@ -227,53 +359,91 @@ export function UploadPanel() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <Label>Data wystawienia</Label>
-                    <Input
-                      type="date"
+                    <Label htmlFor="upload-issue-date">
+                      Data wystawienia <span className="text-destructive" aria-hidden="true">*</span>
+                      <span className="sr-only">(pole wymagane)</span>
+                    </Label>
+                    <DateInput
+                      id="upload-issue-date"
+                      required
                       value={pdfFields.issueDate}
-                      onChange={(e) => updatePdf("issueDate", e.target.value)}
+                      onChange={(v) => updatePdf("issueDate", v)}
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>Termin płatności</Label>
-                    <Input
-                      type="date"
+                    <Label htmlFor="upload-due-date">
+                      Termin płatności <span className="text-destructive" aria-hidden="true">*</span>
+                      <span className="sr-only">(pole wymagane)</span>
+                    </Label>
+                    <DateInput
+                      id="upload-due-date"
+                      required
                       value={pdfFields.dueDate}
-                      onChange={(e) => updatePdf("dueDate", e.target.value)}
+                      onChange={(v) => updatePdf("dueDate", v)}
+                      min={pdfFields.issueDate || undefined}
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div className="space-y-1">
-                    <Label>Netto</Label>
+                    <Label htmlFor="upload-amount-net">
+                      Netto <span className="text-destructive" aria-hidden="true">*</span>
+                      <span className="sr-only">(pole wymagane)</span>
+                    </Label>
                     <Input
-                      type="number"
-                      step="0.01"
+                      id="upload-amount-net"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      required
                       value={pdfFields.amountNet}
                       onChange={(e) => updatePdf("amountNet", e.target.value)}
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>VAT</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={pdfFields.amountVat}
-                      onChange={(e) => updatePdf("amountVat", e.target.value)}
-                    />
+                    <Label htmlFor="upload-vat-rate">
+                      VAT (%) <span className="text-destructive" aria-hidden="true">*</span>
+                      <span className="sr-only">(pole wymagane)</span>
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="upload-vat-rate"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="23"
+                        required
+                        className="pr-8 tabular-nums"
+                        value={pdfFields.vatRate}
+                        onChange={(e) => updatePdf("vatRate", e.target.value)}
+                      />
+                      <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm text-muted-foreground" aria-hidden="true">
+                        %
+                      </span>
+                    </div>
                   </div>
                   <div className="space-y-1">
-                    <Label>Brutto</Label>
+                    <Label htmlFor="upload-amount-gross">
+                      Brutto <span className="text-destructive" aria-hidden="true">*</span>
+                      <span className="sr-only">(pole wymagane, wyliczane automatycznie)</span>
+                    </Label>
                     <Input
-                      type="number"
-                      step="0.01"
+                      id="upload-amount-gross"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      required
+                      readOnly
+                      aria-readonly="true"
+                      className="bg-muted/50 font-medium tabular-nums"
                       value={pdfFields.amountGross}
-                      onChange={(e) => updatePdf("amountGross", e.target.value)}
                     />
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Kwota VAT i Brutto są wyliczane automatycznie na podstawie Netto i stawki VAT.
+                </p>
               </div>
             )}
 
@@ -284,13 +454,14 @@ export function UploadPanel() {
               </p>
             )}
 
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={resetAndClose}>
+            <div className="flex w-full flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+              <Button variant="outline" onClick={resetAndClose} className="w-full sm:w-auto">
                 Anuluj
               </Button>
               <Button
                 onClick={handleUpload}
-                disabled={!file || uploadDoc.isPending}
+                disabled={!file || uploadDoc.isPending || extractPdf.isPending}
+                className="w-full sm:w-auto"
               >
                 {uploadDoc.isPending ? (
                   <>

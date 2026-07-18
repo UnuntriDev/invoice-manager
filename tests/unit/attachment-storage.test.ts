@@ -9,7 +9,7 @@ describe("attachment filesystem storage", () => {
   beforeEach(async () => {
     previousUploadDirectory = process.env.UPLOAD_DIR;
     temporaryDirectory = await fs.mkdtemp(
-      path.join(os.tmpdir(), "invoice-attachments-")
+      path.join(os.tmpdir(), "invoice-attachments-"),
     );
     process.env.UPLOAD_DIR = temporaryDirectory;
     jest.resetModules();
@@ -24,64 +24,57 @@ describe("attachment filesystem storage", () => {
     await fs.rm(temporaryDirectory, { recursive: true, force: true });
   });
 
-  it("writes, reads and removes an attachment within the configured root", async () => {
+  it("writes, reads and removes an attachment by a relative key", async () => {
     const storage = await import("@/lib/storage/attachment-storage");
     const location = storage.createAttachmentLocation(".pdf");
 
-    await storage.writeAttachment(location.filePath, Buffer.from("pdf"));
-
-    await expect(storage.readAttachment(location.filePath)).resolves.toEqual(
-      Buffer.from("pdf")
+    expect(path.isAbsolute(location.fileKey)).toBe(false);
+    await storage.writeAttachment(location.fileKey, Buffer.from("pdf"));
+    await expect(storage.readAttachment(location.fileKey)).resolves.toEqual(
+      Buffer.from("pdf"),
     );
     await expect(
-      storage.removeAttachmentIfExists(location.filePath)
+      storage.removeAttachmentIfExists(location.fileKey),
     ).resolves.toBe(true);
-    await expect(storage.readAttachment(location.filePath)).resolves.toBeNull();
+    await expect(storage.readAttachment(location.fileKey)).resolves.toBeNull();
   });
 
-  it("rejects paths outside the configured upload root", async () => {
-    const storage = await import("@/lib/storage/attachment-storage");
-    const outsidePath = path.join(
-      path.dirname(temporaryDirectory),
-      "outside.pdf"
-    );
+  it.each(["../outside.pdf", "folder/file.pdf", "C:\\outside.pdf", "/tmp/out.pdf"])(
+    "rejects an unsafe attachment key: %s",
+    async (fileKey) => {
+      const storage = await import("@/lib/storage/attachment-storage");
+      await expect(
+        storage.writeAttachment(fileKey, Buffer.from("unsafe")),
+      ).rejects.toThrow("Nieprawidłowy klucz");
+    },
+  );
 
-    await expect(
-      storage.writeAttachment(outsidePath, Buffer.from("unsafe"))
-    ).rejects.toThrow("poza katalogiem uploadów");
-  });
-
-  it("removes unreferenced files and restores interrupted staged deletions", async () => {
+  it("removes only old unreferenced files", async () => {
     const storage = await import("@/lib/storage/attachment-storage");
     const referenced = storage.createAttachmentLocation(".pdf");
     const orphan = storage.createAttachmentLocation(".pdf");
-    await storage.writeAttachment(referenced.filePath, Buffer.from("kept"));
-    await storage.writeAttachment(orphan.filePath, Buffer.from("orphan"));
+    await storage.writeAttachment(referenced.fileKey, Buffer.from("kept"));
+    await storage.writeAttachment(orphan.fileKey, Buffer.from("orphan"));
     const oldTimestamp = new Date(Date.now() - 2_000);
-    await fs.utimes(referenced.filePath, oldTimestamp, oldTimestamp);
-    await fs.utimes(orphan.filePath, oldTimestamp, oldTimestamp);
-
-    const firstReport = await storage.reconcileAttachmentStorage(
-      [referenced.filePath],
-      0
+    await fs.utimes(
+      storage.resolveAttachmentPath(referenced.fileKey),
+      oldTimestamp,
+      oldTimestamp,
+    );
+    await fs.utimes(
+      storage.resolveAttachmentPath(orphan.fileKey),
+      oldTimestamp,
+      oldTimestamp,
     );
 
-    expect(firstReport.deletedOrphans).toContain(orphan.filePath);
-    await expect(storage.readAttachment(referenced.filePath)).resolves.toEqual(
-      Buffer.from("kept")
+    const report = await storage.reconcileAttachmentStorage(
+      [referenced.fileKey],
+      0,
     );
 
-    const staged = await storage.stageAttachmentForDeletion(referenced.filePath);
-    expect(staged).not.toBeNull();
-
-    const secondReport = await storage.reconcileAttachmentStorage(
-      [referenced.filePath],
-      0
-    );
-
-    expect(secondReport.restoredStaged).toContain(referenced.filePath);
-    await expect(storage.readAttachment(referenced.filePath)).resolves.toEqual(
-      Buffer.from("kept")
+    expect(report.deletedOrphans).toContain(orphan.fileKey);
+    await expect(storage.readAttachment(referenced.fileKey)).resolves.toEqual(
+      Buffer.from("kept"),
     );
   });
 });

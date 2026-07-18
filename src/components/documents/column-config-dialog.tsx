@@ -118,12 +118,11 @@ export function ColumnConfigDialog() {
   const [open, setOpen] = useState(false);
   const items = draftItems ?? normalizeColumnConfig(serverConfig);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
+  const pointerSensor = useSensor(PointerSensor);
+  const keyboardSensor = useSensor(KeyboardSensor, {
+    coordinateGetter: sortableKeyboardCoordinates,
+  });
+  const sensors = useSensors(pointerSensor, keyboardSensor);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -183,7 +182,12 @@ export function ColumnConfigDialog() {
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => handleOpenChange(true)}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-11 md:h-7"
+        onClick={() => handleOpenChange(true)}
+      >
         <Settings2 className="mr-2 h-4 w-4" />
         Kolumny
       </Button>

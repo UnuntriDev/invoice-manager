@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState, useMemo } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,32 +46,9 @@ import {
   useDeleteCategory,
 } from "@/lib/hooks/use-documents";
 import { categoryCreateSchema } from "@/lib/validators/schemas";
-
-interface CategoryNode {
-  id: string;
-  name: string;
-  parentId: string | null;
-  _count: { documents: number; children: number };
-  children: CategoryNode[];
-}
-
-function flattenCategories(
-  nodes: CategoryNode[],
-  excludeId?: string,
-  prefix = ""
-): { id: string; label: string }[] {
-  const result: { id: string; label: string }[] = [];
-  for (const node of nodes) {
-    if (node.id === excludeId) continue;
-    result.push({ id: node.id, label: prefix + node.name });
-    if (node.children?.length) {
-      result.push(
-        ...flattenCategories(node.children, excludeId, prefix + "  └ ")
-      );
-    }
-  }
-  return result;
-}
+import { flattenCategories, type CategoryNode } from "@/lib/categories";
+import { QueryErrorState } from "@/components/query-error-state";
+import { useNotifications } from "@/components/notification-context";
 
 function TreeNode({
   node,
@@ -86,17 +64,21 @@ function TreeNode({
   onDelete: (cat: CategoryNode) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const hasChildren = node.children?.length > 0;
+  const hasChildren = (node.children?.length ?? 0) > 0;
 
   return (
     <div>
       <div
-        className="group flex items-center gap-1 rounded-md px-2 py-1.5 hover:bg-muted/50"
+        className="group flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-muted/50"
         style={{ paddingLeft: `${level * 24 + 8}px` }}
       >
         <button
+          type="button"
           onClick={() => hasChildren && setExpanded(!expanded)}
-          className="flex h-5 w-5 shrink-0 items-center justify-center"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-muted"
+          disabled={!hasChildren}
+          aria-label={hasChildren ? `${expanded ? "Zwiń" : "Rozwiń"} kategorię ${node.name}` : undefined}
+          aria-expanded={hasChildren ? expanded : undefined}
         >
           {hasChildren ? (
             expanded ? (
@@ -111,37 +93,40 @@ function TreeNode({
 
         <span className="flex-1 text-sm font-medium">{node.name}</span>
 
-        {node._count.documents > 0 && (
-          <span className="mr-2 text-xs text-muted-foreground">
-            {node._count.documents} dok.
+        {(node._count?.documents ?? 0) > 0 && (
+          <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">
+            {node._count!.documents}
           </span>
         )}
 
-        <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex gap-0.5 text-muted-foreground">
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => onAdd(node.id)}
             title="Dodaj podkategorię"
+            aria-label={`Dodaj podkategorię do ${node.name}`}
           >
             <FolderPlus className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => onEdit(node)}
             title="Edytuj"
+            aria-label={`Edytuj kategorię ${node.name}`}
           >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0 text-destructive"
+            className="h-8 w-8 p-0 text-destructive"
             onClick={() => onDelete(node)}
             title="Usuń"
+            aria-label={`Usuń kategorię ${node.name}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -150,7 +135,7 @@ function TreeNode({
 
       {hasChildren && expanded && (
         <div>
-          {node.children.map((child) => (
+          {node.children!.map((child) => (
             <TreeNode
               key={child.id}
               node={child}
@@ -166,19 +151,37 @@ function TreeNode({
   );
 }
 
-export default function CategoriesPage() {
-  const { data: categories, isLoading } = useCategories();
+function CategoriesPageContent() {
+  const searchParams = useSearchParams();
+  const pageRouter = useRouter();
+  const {
+    data: categories,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useCategories();
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory();
   const deleteCategory = useDeleteCategory();
+  const { add: addNotification } = useNotifications();
 
-  const [formOpen, setFormOpen] = useState(false);
+  const actionAdd = searchParams.get("action") === "add";
+  const [formOpen, setFormOpen] = useState(actionAdd);
+
+  useEffect(() => {
+    if (actionAdd) pageRouter.replace("/settings/categories");
+  }, [actionAdd, pageRouter]);
   const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CategoryNode | null>(null);
 
-  const tree: CategoryNode[] = categories || [];
+  const tree = useMemo(
+    () => (categories ?? []) as CategoryNode[],
+    [categories],
+  );
 
   function openNew(presetParentId?: string) {
     setEditId(null);
@@ -205,9 +208,11 @@ export default function CategoriesPage() {
       if (editId) {
         await updateCategory.mutateAsync({ id: editId, data });
         toast.success("Kategoria zaktualizowana");
+        addNotification({ title: "Kategoria zaktualizowana", description: data.name });
       } else {
         await createCategory.mutateAsync(data);
         toast.success("Kategoria dodana");
+        addNotification({ title: "Kategoria dodana", description: data.name });
       }
       setFormOpen(false);
     } catch (error) {
@@ -220,24 +225,33 @@ export default function CategoriesPage() {
     try {
       await deleteCategory.mutateAsync(deleteTarget.id);
       toast.success("Kategoria usunięta");
+      addNotification({ title: "Kategoria usunięta", description: deleteTarget.name });
       setDeleteTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Błąd usuwania");
     }
   }
 
-  const parentOptions = flattenCategories(tree, editId || undefined);
+  const parentOptions = useMemo(
+    () => flattenCategories(tree, { prefix: "  └ ", excludeId: editId || undefined }),
+    [tree, editId],
+  );
+
+  const parentItems = useMemo(
+    () => ({ none: "Brak (kategoria główna)", ...Object.fromEntries(parentOptions.map((opt) => [opt.id, opt.label])) }),
+    [parentOptions],
+  );
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between border-b pb-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Kategorie</h1>
-          <p className="text-sm text-muted-foreground">
+    <div className="flex flex-col gap-5 p-4 sm:p-6">
+      <div className="flex flex-col items-start justify-between gap-3 border-b pb-3 sm:flex-row sm:items-center">
+        <div className="space-y-0.5">
+          <h1 className="text-2xl leading-tight font-bold">Kategorie</h1>
+          <p className="text-sm leading-5 text-muted-foreground">
             Drzewo kategorii dokumentów
           </p>
         </div>
-        <Button onClick={() => openNew()}>
+        <Button className="h-10 px-4 text-sm transition-shadow duration-300 hover:shadow-[0_0_20px_2px_#009d6666]" onClick={() => openNew()}>
           <Plus className="mr-2 h-4 w-4" />
           Dodaj kategorię
         </Button>
@@ -249,6 +263,13 @@ export default function CategoriesPage() {
             <Skeleton key={i} className="h-10 w-full" />
           ))}
         </div>
+      ) : isError ? (
+        <QueryErrorState
+          title="Nie udało się pobrać kategorii"
+          error={error}
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
       ) : !tree.length ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <FolderTree className="mb-4 h-16 w-16" />
@@ -279,21 +300,22 @@ export default function CategoriesPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1">
-              <Label>Nazwa *</Label>
+              <Label htmlFor="category-name">Nazwa <span className="text-destructive">*</span></Label>
               <Input
+                id="category-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="np. Koszty operacyjne"
               />
             </div>
             <div className="space-y-1">
-              <Label>Kategoria nadrzędna</Label>
+              <Label htmlFor="category-parent">Kategoria nadrzędna</Label>
               <Select
                 value={parentId ?? "none"}
                 onValueChange={(v) => setParentId(v === "none" ? null : v)}
-                items={{ none: "Brak (kategoria główna)", ...Object.fromEntries(parentOptions.map((opt) => [opt.id, opt.label])) }}
+                items={parentItems}
               >
-                <SelectTrigger>
+                <SelectTrigger id="category-parent">
                   <SelectValue placeholder="Brak (kategoria główna)" />
                 </SelectTrigger>
                 <SelectContent>
@@ -339,15 +361,20 @@ export default function CategoriesPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Anuluj</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction variant="destructive" onClick={handleDelete}>
               Usuń
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function CategoriesPage() {
+  return (
+    <Suspense fallback={null}>
+      <CategoriesPageContent />
+    </Suspense>
   );
 }

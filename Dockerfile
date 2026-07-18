@@ -12,6 +12,13 @@ ENV NODE_ENV=production
 RUN npx prisma generate
 RUN npm run build
 
+# Railway uruchamia pre-deploy command z finalnego obrazu. Ten etap dostarcza
+# wyłącznie CLI Prisma potrzebne do migracji, bez kopiowania całego node_modules
+# z zależnościami deweloperskimi do runtime.
+FROM base AS prisma-cli
+ARG PRISMA_VERSION=7.8.0
+RUN npm install --global "prisma@${PRISMA_VERSION}"
+
 # Migracje są osobnym, jednorazowym krokiem release. Nie konkurują w wielu
 # replikach aplikacji i nie wymagają kopiowania całego node_modules do runtime.
 FROM deps AS migrator
@@ -33,6 +40,10 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./prisma.config.ts
+COPY --from=prisma-cli --chown=nextjs:nodejs /usr/local/lib/node_modules/prisma ./node_modules/prisma
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv
 
 USER nextjs
 EXPOSE 3000

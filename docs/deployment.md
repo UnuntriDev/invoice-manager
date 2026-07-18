@@ -71,6 +71,23 @@ docker compose -f docker-compose.production.yml ps
 Serwis `migrate` musi zakończyć się kodem 0 przed uruchomieniem `app`.
 Runtime jest minimalnym standalone image i otrzymuje `SIGTERM` bezpośrednio.
 
+## Railway
+
+Repozytorium zawiera `railway.json`. Railway buduje finalny etap pliku
+`Dockerfile`, wykonuje `prisma migrate deploy` jako pre-deploy command, a po
+starcie sprawdza `/api/health`.
+
+1. Utwórz projekt z repozytorium GitHub i dodaj usługę PostgreSQL.
+2. W usłudze aplikacji ustaw `DATABASE_URL=${{Postgres.DATABASE_URL}}` oraz
+   pozostałe zmienne opisane wyżej.
+3. Dołącz trwały volume pod `/app/uploads` i ustaw `UPLOAD_DIR=/app/uploads`.
+4. Ponieważ Railway montuje volume jako `root`, ustaw `RAILWAY_RUN_UID=0`.
+   Obraz nadal działa jako nieuprzywilejowany `nextjs` poza Railway.
+5. Po udanym deployu wygeneruj domenę publiczną i sprawdź `/api/health`.
+
+Nie uruchamiaj seeda automatycznie podczas wdrożenia. Dane demonstracyjne można
+dodać tylko świadomie, jednorazowo, z konsoli Railway.
+
 ## Walidacja po deployu
 
 ```bash

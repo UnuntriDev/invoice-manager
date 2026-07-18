@@ -141,3 +141,8 @@ tryb interaktywny. Wymagany jednorazowo `npx playwright install chromium`.
 - Typy systemowe nie mogą być usunięte
 - NIP firmy pochodzi ze zwalidowanego `COMPANY_NIP`, nie jest zgadywany
 - Harmonogram wymaga stale działającego procesu Node z rozproszonym lease w PostgreSQL
+
+## Licencja
+
+Projekt jest udostępniany na licencji MIT. Szczegóły znajdują się w pliku
+[`LICENSE`](LICENSE).

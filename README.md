@@ -10,6 +10,8 @@ auto-kategoryzacją kontrahentów i podglądem PDF/XML w przeglądarce.
 **🔗 Demo na żywo**: [invoice-manager-production-f3cf.up.railway.app](https://invoice-manager-production-f3cf.up.railway.app/documents)
 (Railway, z załadowanymi danymi demonstracyjnymi)
 
+![Przegląd aplikacji](docs/demo.gif)
+
 ## Uruchomienie
 
 Wymagane: Node.js 22+, npm, PostgreSQL (lub Docker).

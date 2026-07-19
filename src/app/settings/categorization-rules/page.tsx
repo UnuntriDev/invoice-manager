@@ -198,9 +198,9 @@ function CategorizationRulesPageContent() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Reguły działają dla dokumentów, których kontrahent nie ma domyślnej
-        kategorii. Wyższy priorytet wygrywa; przy równym — dłuższe (bardziej
-        specyficzne) słowo kluczowe.
+        Reguły działają tylko wtedy, gdy kontrahent dokumentu nie ma ustawionej
+        domyślnej kategorii. Jeśli pasuje kilka reguł, wygrywa ta z wyższym
+        priorytetem, a przy równym priorytecie ta z dłuższym słowem kluczowym.
       </p>
 
       {isLoading ? (

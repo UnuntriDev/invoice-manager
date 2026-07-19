@@ -60,7 +60,7 @@ async function seedDatabase(tx: Prisma.TransactionClient) {
 
   const catPrzychody = await getOrCreateCategory("Przychody");
   const catSprzedazHurt = await getOrCreateCategory("Sprzedaż hurtowa", catPrzychody.id);
-  await getOrCreateCategory("Sprzedaż detaliczna", catPrzychody.id);
+  const catSprzedazDet = await getOrCreateCategory("Sprzedaż detaliczna", catPrzychody.id);
 
   console.log("  Kategorie (drzewo)");
 
@@ -361,6 +361,56 @@ async function seedDatabase(tx: Prisma.TransactionClient) {
 
   console.log("  Harmonogram KSeF (3 wpisy: 1:00, 7:00, 13:00)");
 
+  // Przykładowe reguły auto-kategoryzacji. Kontrahenci "Delikatesy Natura"
+  // i "Hurtownia Smakosz" istnieją tylko w mocku KSeF, więc po pobraniu
+  // z KSeF trafiają do bazy bez domyślnej kategorii i te reguły faktycznie
+  // przypisują im kategorie.
+  const categorizationRules = [
+    {
+      pattern: "delikatesy",
+      matchField: "contractorName",
+      categoryId: catSprzedazDet.id,
+      priority: 10,
+      isActive: true,
+    },
+    {
+      pattern: "hurtownia",
+      matchField: "contractorName",
+      categoryId: catSprzedazHurt.id,
+      priority: 5,
+      isActive: true,
+    },
+    {
+      pattern: "korekta",
+      matchField: "invoiceNumber",
+      categoryId: catKosztyOp.id,
+      priority: 0,
+      isActive: true,
+    },
+  ];
+
+  for (const rule of categorizationRules) {
+    const existing = await tx.categorizationRule.findFirst({
+      where: { pattern: rule.pattern, matchField: rule.matchField },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+
+    if (existing) {
+      await tx.categorizationRule.update({
+        where: { id: existing.id },
+        data: {
+          categoryId: rule.categoryId,
+          priority: rule.priority,
+          isActive: rule.isActive,
+        },
+      });
+    } else {
+      await tx.categorizationRule.create({ data: rule });
+    }
+  }
+
+  console.log("  Reguły auto-kategoryzacji (3 wpisy)");
+
   const defaultColumns = [
     { columnKey: "invoiceNumber", isVisible: true, position: 0 },
     { columnKey: "documentType", isVisible: true, position: 1 },
@@ -410,6 +460,7 @@ async function main() {
   console.log("   Kategorie: 10 (drzewo 2-poziomowe)");
   console.log("   Dokumenty: 13 (9 zaakceptowanych + 4 w buforze)");
   console.log("   Typy dokumentow: 3 (2 systemowe + 1 custom)");
+  console.log("   Reguly auto-kategoryzacji: 3");
 }
 
 main()

@@ -21,7 +21,7 @@ cp .env.example .env          # ustaw COMPANY_NIP i CRON_SECRET
 docker compose up -d db
 npm ci
 npx prisma migrate deploy
-npx prisma db seed            # 5 kontrahentów, 10 kategorii, 13 dokumentów, 3 harmonogramy
+npx prisma db seed            # 5 kontrahentów, 10 kategorii, 13 dokumentów, 3 harmonogramy, 3 reguły
 npm run dev                   # http://localhost:3000
 ```
 
@@ -91,18 +91,19 @@ React UI  →  Route Handlers (walidacja Zod)  →  Service Layer  →  Prisma O
 
 ## Zadania dodatkowe (zrealizowane)
 
-- **Auto-uzupełnianie danych kontrahenta po NIP** — przycisk „Pobierz dane"
+- **Auto-uzupełnianie danych kontrahenta po NIP**. Przycisk „Pobierz dane"
   w formularzu kontrahenta pobiera nazwę, adres i status VAT z publicznego
   API wykazu podatników VAT MF (`wl-api.mf.gov.pl`, bez klucza; rejestr
   GUS/REGON wymaga rejestrowanego klucza, więc wybrałem białą listę).
-- **Weryfikacja rachunku na białej liście VAT** — przycisk „Zweryfikuj"
-  sprawdza rachunek dedykowanym endpointem wykazu (obsługuje też rachunki
-  wirtualne); wynik ✓/✗ prezentowany inline w formularzu.
-- **Zaawansowane reguły auto-kategoryzacji** — Ustawienia → Reguły
-  kategoryzacji: słowo kluczowe dopasowywane w nazwie kontrahenta lub numerze
-  dokumentu przypisuje kategorię przy imporcie KSeF, uploadzie XML/PDF
-  i ręcznym dodawaniu. Reguła „kontrahent → kategoria" ma pierwszeństwo;
-  dalej wyższy priorytet, potem dłuższa (bardziej specyficzna) fraza.
+- **Weryfikacja rachunku na białej liście VAT**. Przycisk „Zweryfikuj"
+  sprawdza rachunek dedykowanym endpointem wykazu, który obsługuje też
+  rachunki wirtualne. Wynik jest prezentowany bezpośrednio w formularzu.
+- **Zaawansowane reguły auto-kategoryzacji**. Na stronie Ustawienia / Reguły
+  kategoryzacji definiuje się słowa kluczowe dopasowywane w nazwie kontrahenta
+  lub numerze dokumentu. Pasująca reguła przypisuje kategorię przy imporcie
+  KSeF, uploadzie XML/PDF i ręcznym dodawaniu. Pierwszeństwo ma domyślna
+  kategoria kontrahenta, następnie reguła z wyższym priorytetem, a przy równym
+  priorytecie ta z dłuższą, bardziej specyficzną frazą.
 
 ## Research rynku
 

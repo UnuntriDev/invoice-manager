@@ -33,8 +33,16 @@ test.describe("Nawigacja", () => {
   test("otwiera i zamyka paletę poleceń skrótem Ctrl+K", async ({ page }) => {
     await page.goto("/documents");
 
-    await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Przejdź do…" });
+
+    // Kliknięcie triggera potwierdza, że klient został już zhydradowany i
+    // listener skrótu klawiaturowego jest podłączony także w pełnym zestawie.
+    await page.getByText("Szukaj w aplikacji...", { exact: true }).click();
+    await expect(palette).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(palette).not.toBeVisible();
+
+    await page.keyboard.press("Control+k");
     await expect(palette).toBeVisible();
 
     await page.keyboard.press("Escape");

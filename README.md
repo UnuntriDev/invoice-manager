@@ -121,7 +121,7 @@ NIP/IBAN (sumy kontrolne, nie regex).
 npm run lint          # ESLint
 npm run typecheck     # tsc --noEmit
 npm test              # jednostkowe: 34 zestawy, 189 testów (Jest)
-npm run test:e2e      # E2E: 10 testów (Playwright, wymaga działającej aplikacji)
+npm run test:e2e      # E2E: 11 testów (Playwright, wymaga działającej aplikacji)
 npm run build         # produkcyjny build
 ```
 
@@ -132,7 +132,8 @@ schedulera, reconciliacja storage, daty Warsaw, dostępność klawiaturą.
 
 **Testy E2E (Playwright)** — smoke krytycznych ścieżek w przeglądarce: nawigacja,
 pełny cykl CRUD kontrahentów / kategorii / typów dokumentów / dokumentów,
-walidacja NIP w formularzu, powiadomienia po akcjach oraz paleta poleceń (Ctrl+K).
+walidacja NIP w formularzu, powiadomienia po akcjach, paleta poleceń (Ctrl+K)
+oraz pełny obieg KSeF → bufor → podgląd → akceptacja → rejestr → podgląd.
 Testy działają na bazie deweloperskiej i sprzątają po sobie utworzone rekordy
 (unikalne nazwy + usuwanie w tym samym teście). `npm run test:e2e:ui` uruchamia
 tryb interaktywny. Wymagany jednorazowo `npx playwright install chromium`.

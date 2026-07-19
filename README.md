@@ -7,6 +7,9 @@ auto-kategoryzacją kontrahentów i podglądem PDF/XML w przeglądarce.
 **Stack**: Next.js 16 (App Router) · React 19 · TypeScript 5 · Prisma 7 + PostgreSQL
 · Zod 4 · TanStack Table/Query · shadcn/ui · Docker · node-cron
 
+**🔗 Demo na żywo**: [invoice-manager-production-f3cf.up.railway.app](https://invoice-manager-production-f3cf.up.railway.app/documents)
+(Railway, z załadowanymi danymi demonstracyjnymi)
+
 ## Uruchomienie
 
 Wymagane: Node.js 22+, npm, PostgreSQL (lub Docker).

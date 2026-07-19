@@ -86,6 +86,29 @@ export const categoryCreateSchema = z.object({
 
 export const categoryUpdateSchema = categoryCreateSchema.partial();
 
+// --- REGUŁA AUTO-KATEGORYZACJI ---
+
+export const categorizationRuleCreateSchema = z.object({
+  pattern: z
+    .string()
+    .trim()
+    .min(2, "Słowo kluczowe musi mieć co najmniej 2 znaki")
+    .max(100),
+  matchField: z.enum(["contractorName", "invoiceNumber", "description"], {
+    error: "Nieprawidłowe pole dopasowania reguły",
+  }),
+  categoryId: cuidSchema,
+  priority: z.number().int().min(0).max(1000).default(0),
+  isActive: z.boolean().default(true),
+});
+
+export const categorizationRuleUpdateSchema =
+  categorizationRuleCreateSchema.partial();
+
+export type CategorizationRuleCreate = z.infer<
+  typeof categorizationRuleCreateSchema
+>;
+
 // --- DOKUMENT ---
 
 const documentFormFields = {

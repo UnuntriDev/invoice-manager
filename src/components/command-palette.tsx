@@ -20,6 +20,7 @@ import {
   Radio,
   Search,
   Users,
+  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,7 @@ const navItems: NavItem[] = [
   { href: "/contractors", label: "Kontrahenci", icon: Users, group: "Strony" },
   { href: "/settings/categories", label: "Kategorie", icon: FolderTree, group: "Ustawienia" },
   { href: "/settings/document-types", label: "Typy dokumentów", icon: FileType2, group: "Ustawienia" },
+  { href: "/settings/categorization-rules", label: "Reguły kategoryzacji", icon: Wand2, group: "Ustawienia" },
   { href: "/settings/ksef", label: "KSeF / Harmonogram", icon: Radio, group: "Ustawienia" },
   { href: "/documents?action=add", label: "Dodaj dokument", icon: Plus, group: "Akcje" },
   { href: "/contractors?action=add", label: "Dodaj kontrahenta", icon: Plus, group: "Akcje" },

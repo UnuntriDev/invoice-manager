@@ -7,6 +7,7 @@ const mockDocument = {
 };
 const mockContractor = { upsert: jest.fn() };
 const mockDocumentType = { findFirst: jest.fn() };
+const mockCategorizationRule = { findMany: jest.fn() };
 const mockTransaction = jest.fn();
 const mockWriteAttachment = jest.fn();
 const mockRemoveAttachmentIfExists = jest.fn();
@@ -71,18 +72,21 @@ beforeEach(() => {
       id: "cm12345678901234567890123",
     }),
   );
+  mockCategorizationRule.findMany.mockResolvedValue([]);
   mockTransaction.mockImplementation(
     async (
       callback: (transaction: {
         document: typeof mockDocument;
         contractor: typeof mockContractor;
         documentType: typeof mockDocumentType;
+        categorizationRule: typeof mockCategorizationRule;
       }) => unknown,
     ) =>
       callback({
         document: mockDocument,
         contractor: mockContractor,
         documentType: mockDocumentType,
+        categorizationRule: mockCategorizationRule,
       }),
   );
 });

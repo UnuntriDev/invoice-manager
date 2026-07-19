@@ -7,6 +7,10 @@ const mockContractor = {
   findUnique: jest.fn(),
 };
 
+const mockCategorizationRule = {
+  findMany: jest.fn(),
+};
+
 const mockTransaction = jest.fn();
 const mockWriteAttachment = jest.fn();
 const mockRemoveAttachmentIfExists = jest.fn();
@@ -57,14 +61,21 @@ beforeEach(() => {
   mockRemoveAttachmentIfExists.mockResolvedValue(true);
   mockDocument.findUnique.mockResolvedValue(null);
   mockContractor.findUnique.mockResolvedValue({ defaultCategoryId: null });
+  mockCategorizationRule.findMany.mockResolvedValue([]);
   mockDocument.create.mockResolvedValue({ id: "doc-1" });
   mockTransaction.mockImplementation(
     async (
       callback: (transaction: {
         document: typeof mockDocument;
         contractor: typeof mockContractor;
+        categorizationRule: typeof mockCategorizationRule;
       }) => unknown
-    ) => callback({ document: mockDocument, contractor: mockContractor })
+    ) =>
+      callback({
+        document: mockDocument,
+        contractor: mockContractor,
+        categorizationRule: mockCategorizationRule,
+      })
   );
 });
 

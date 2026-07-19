@@ -43,7 +43,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Plus, Pencil, Trash2, Building2, Copy } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Building2,
+  Copy,
+  CloudDownload,
+  Loader2,
+  ShieldCheck,
+  ShieldX,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   useContractors,
@@ -110,6 +120,51 @@ function ContractorsPageContent() {
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [defaultCategoryId, setDefaultCategoryId] = useState<string | null>(null);
 
+  // Integracja z białą listą MF: auto-uzupełnianie po NIP + weryfikacja rachunku.
+  const [lookupPending, setLookupPending] = useState(false);
+  const [verifyPending, setVerifyPending] = useState(false);
+  const [accountStatus, setAccountStatus] = useState<"ok" | "missing" | null>(null);
+
+  const nipDigits = nip.replace(/\D/g, "");
+  const accountDigits = bankAccountNumber.replace(/\D/g, "");
+
+  async function handleNipLookup() {
+    setLookupPending(true);
+    try {
+      const res = await fetch(`/api/contractors/lookup?nip=${nipDigits}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Nie udało się pobrać danych");
+      const subject = body.data as { name: string; address: string | null; statusVat: string | null };
+      setName(subject.name);
+      if (subject.address) setAddress(subject.address);
+      toast.success("Pobrano dane z wykazu podatników VAT", {
+        description: subject.statusVat ? `Status VAT: ${subject.statusVat}` : undefined,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Nie udało się pobrać danych");
+    } finally {
+      setLookupPending(false);
+    }
+  }
+
+  async function handleAccountVerify() {
+    setVerifyPending(true);
+    setAccountStatus(null);
+    try {
+      const res = await fetch(
+        `/api/contractors/lookup?nip=${nipDigits}&account=${accountDigits}`,
+      );
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Nie udało się zweryfikować rachunku");
+      const { assigned } = body.data as { assigned: boolean };
+      setAccountStatus(assigned ? "ok" : "missing");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Nie udało się zweryfikować rachunku");
+    } finally {
+      setVerifyPending(false);
+    }
+  }
+
   const flatCats = useMemo(
     () => (categories ? flattenCategories(categories) : []),
     [categories],
@@ -127,10 +182,12 @@ function ContractorsPageContent() {
     setAddress("");
     setBankAccountNumber("");
     setDefaultCategoryId(null);
+    setAccountStatus(null);
     setFormOpen(true);
   }
 
   function openEdit(c: Contractor) {
+    setAccountStatus(null);
     setEditing(c);
     setName(c.name);
     setNip(c.nip);
@@ -466,18 +523,36 @@ function ContractorsPageContent() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="contractor-nip">NIP <span className="text-destructive">*</span></Label>
-              <Input
-                id="contractor-nip"
-                value={nip}
-                onChange={(e) => {
-                  const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
-                  const parts = [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6, 8), digits.slice(8, 10)];
-                  setNip(parts.filter(Boolean).join(" "));
-                }}
-                placeholder="000 000 00 00"
-                maxLength={13}
-                disabled={!!editing}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="contractor-nip"
+                  value={nip}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    const parts = [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6, 8), digits.slice(8, 10)];
+                    setNip(parts.filter(Boolean).join(" "));
+                    setAccountStatus(null);
+                  }}
+                  placeholder="000 000 00 00"
+                  maxLength={13}
+                  disabled={!!editing}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={handleNipLookup}
+                  disabled={nipDigits.length !== 10 || lookupPending}
+                  title="Pobierz nazwę i adres z wykazu podatników VAT"
+                >
+                  {lookupPending ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <CloudDownload className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  )}
+                  Pobierz dane
+                </Button>
+              </div>
             </div>
             <div className="space-y-1">
               <Label htmlFor="contractor-address">Adres</Label>
@@ -485,20 +560,52 @@ function ContractorsPageContent() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="contractor-bank-account">Numer rachunku bankowego</Label>
-              <Input
-                id="contractor-bank-account"
-                value={bankAccountNumber}
-                onChange={(e) => {
-                  const digits = e.target.value.replace(/\D/g, "").slice(0, 26);
-                  let fmt = digits.slice(0, 2);
-                  for (let i = 2; i < digits.length; i += 4) {
-                    fmt += " " + digits.slice(i, i + 4);
+              <div className="flex gap-2">
+                <Input
+                  id="contractor-bank-account"
+                  value={bankAccountNumber}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 26);
+                    let fmt = digits.slice(0, 2);
+                    for (let i = 2; i < digits.length; i += 4) {
+                      fmt += " " + digits.slice(i, i + 4);
+                    }
+                    setBankAccountNumber(fmt);
+                    setAccountStatus(null);
+                  }}
+                  placeholder="00 0000 0000 0000 0000 0000 0000"
+                  maxLength={32}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={handleAccountVerify}
+                  disabled={
+                    nipDigits.length !== 10 || accountDigits.length !== 26 || verifyPending
                   }
-                  setBankAccountNumber(fmt);
-                }}
-                placeholder="00 0000 0000 0000 0000 0000 0000"
-                maxLength={32}
-              />
+                  title="Sprawdź, czy rachunek widnieje na białej liście podatników VAT"
+                >
+                  {verifyPending ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ShieldCheck className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  )}
+                  Zweryfikuj
+                </Button>
+              </div>
+              {accountStatus === "ok" && (
+                <p className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-500" role="status">
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                  Rachunek widnieje na białej liście podatników VAT
+                </p>
+              )}
+              {accountStatus === "missing" && (
+                <p className="flex items-center gap-1.5 text-sm text-destructive" role="status">
+                  <ShieldX className="h-4 w-4" aria-hidden="true" />
+                  Rachunek nie widnieje na białej liście dla tego NIP
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <Label htmlFor="contractor-default-category">Domyślna kategoria</Label>

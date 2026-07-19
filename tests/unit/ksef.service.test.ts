@@ -7,10 +7,13 @@ const mockDocumentTypeFindFirst = jest.fn();
 const mockContractorUpsert = jest.fn();
 const mockDocumentCreateMany = jest.fn();
 
+const mockCategorizationRuleFindMany = jest.fn();
+
 const mockTransactionClient = {
   documentType: { findFirst: mockDocumentTypeFindFirst },
   contractor: { upsert: mockContractorUpsert },
   document: { createMany: mockDocumentCreateMany },
+  categorizationRule: { findMany: mockCategorizationRuleFindMany },
 };
 
 const mockTransaction = jest.fn();
@@ -73,6 +76,7 @@ function invoice(overrides: Partial<KSeFInvoice> = {}): KSeFInvoice {
 beforeEach(() => {
   jest.clearAllMocks();
 
+  mockCategorizationRuleFindMany.mockResolvedValue([]);
   mockDocumentTypeFindFirst.mockResolvedValue({ id: "cost-type" });
   mockContractorUpsert.mockImplementation(
     async ({ where }: { where: { nip: string } }) => ({

@@ -10,6 +10,7 @@ import {
   Inbox,
   Radio,
   Users,
+  Wand2,
 } from "lucide-react";
 import {
   Tooltip,
@@ -29,6 +30,7 @@ const mainNav = [
 const settingsNav = [
   { href: "/settings/categories", label: "Kategorie", icon: FolderTree },
   { href: "/settings/document-types", label: "Typy dokumentów", icon: FileType2 },
+  { href: "/settings/categorization-rules", label: "Reguły kategoryzacji", icon: Wand2 },
   { href: "/settings/ksef", label: "KSeF / Harmonogram", icon: Radio },
 ];
 

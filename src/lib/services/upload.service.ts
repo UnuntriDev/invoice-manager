@@ -13,6 +13,7 @@ import {
   getUploadFileValidationError,
 } from "@/lib/validators/upload";
 import { validateUploadBuffer } from "@/lib/validators/upload-content";
+import { resolveCategoryFromRules } from "@/lib/services/categorization-rule.service";
 import {
   createAttachmentLocation,
   removeAttachmentIfExists,
@@ -179,7 +180,12 @@ async function handleXmlUpload(
           amountVat: parsed.amountVat,
           amountGross: parsed.amountGross,
           bankAccountNumber: parsed.bankAccountNumber || "",
-          categoryId: contractor.defaultCategoryId,
+          categoryId:
+            contractor.defaultCategoryId ??
+            (await resolveCategoryFromRules(transaction, {
+              contractorName: contractor.name,
+              invoiceNumber: parsed.invoiceNumber,
+            })),
           source: "UPLOAD",
           status: "BUFFER",
         });
@@ -259,11 +265,19 @@ async function handlePdfUpload(buffer: Buffer, fileName: string, fileKey: string
 
         const contractor = await transaction.contractor.findUnique({
           where: { id: data.contractorId },
-          select: { defaultCategoryId: true },
+          select: { defaultCategoryId: true, name: true },
         });
         if (!contractor) {
           throw new ValidationError("Nie znaleziono kontrahenta");
         }
+
+        const resolvedCategoryId =
+          data.categoryId ||
+          contractor.defaultCategoryId ||
+          (await resolveCategoryFromRules(transaction, {
+            contractorName: contractor.name,
+            invoiceNumber: data.invoiceNumber,
+          }));
 
         return transaction.document.create({
           data: {
@@ -276,8 +290,7 @@ async function handlePdfUpload(buffer: Buffer, fileName: string, fileKey: string
             amountVat: parseMoney(data.amountVat),
             amountGross: parseMoney(data.amountGross),
             bankAccountNumber: data.bankAccountNumber || null,
-            categoryId:
-              data.categoryId || contractor.defaultCategoryId || null,
+            categoryId: resolvedCategoryId || null,
             source: "UPLOAD",
             status: "BUFFER",
             fileName,

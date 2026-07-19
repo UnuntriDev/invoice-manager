@@ -11,6 +11,10 @@ const mockContractor = {
   findUnique: jest.fn(),
 };
 
+const mockCategorizationRule = {
+  findMany: jest.fn(),
+};
+
 const mockAttachmentCleanupTask = {
   upsert: jest.fn(),
 };
@@ -26,6 +30,7 @@ jest.mock("@/lib/prisma", () => ({
   default: {
     document: mockDocument,
     contractor: mockContractor,
+    categorizationRule: mockCategorizationRule,
     $transaction: mockTransaction,
   },
 }));
@@ -52,6 +57,7 @@ const baseDocData = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCategorizationRule.findMany.mockResolvedValue([]);
   mockTransaction.mockImplementation(
     async (
       callback: (transaction: {

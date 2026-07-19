@@ -89,6 +89,21 @@ React UI  →  Route Handlers (walidacja Zod)  →  Service Layer  →  Prisma O
 | XML | Blokada DTD/ENTITY, limit znaków, `processEntities: false` | Ochrona przed XXE i billion laughs |
 | Załączniki | Path traversal: `normalizeKey` + `path.relative` | Dwuwarstwowa ochrona przed wyjściem z katalogu |
 
+## Zadania dodatkowe (zrealizowane)
+
+- **Auto-uzupełnianie danych kontrahenta po NIP** — przycisk „Pobierz dane"
+  w formularzu kontrahenta pobiera nazwę, adres i status VAT z publicznego
+  API wykazu podatników VAT MF (`wl-api.mf.gov.pl`, bez klucza; rejestr
+  GUS/REGON wymaga rejestrowanego klucza, więc wybrałem białą listę).
+- **Weryfikacja rachunku na białej liście VAT** — przycisk „Zweryfikuj"
+  sprawdza rachunek dedykowanym endpointem wykazu (obsługuje też rachunki
+  wirtualne); wynik ✓/✗ prezentowany inline w formularzu.
+- **Zaawansowane reguły auto-kategoryzacji** — Ustawienia → Reguły
+  kategoryzacji: słowo kluczowe dopasowywane w nazwie kontrahenta lub numerze
+  dokumentu przypisuje kategorię przy imporcie KSeF, uploadzie XML/PDF
+  i ręcznym dodawaniu. Reguła „kontrahent → kategoria" ma pierwszeństwo;
+  dalej wyższy priorytet, potem dłuższa (bardziej specyficzna) fraza.
+
 ## Research rynku
 
 Istniejące rozwiązania (Fakturownia, wFirma, SaldeoSMART) oferują integrację
@@ -102,7 +117,7 @@ NIP/IBAN (sumy kontrolne, nie regex).
 ```bash
 npm run lint          # ESLint
 npm run typecheck     # tsc --noEmit
-npm test              # jednostkowe: 31 zestawów, 168 testów (Jest)
+npm test              # jednostkowe: 34 zestawy, 189 testów (Jest)
 npm run test:e2e      # E2E: 10 testów (Playwright, wymaga działającej aplikacji)
 npm run build         # produkcyjny build
 ```
@@ -133,8 +148,7 @@ tryb interaktywny. Wymagany jednorazowo `npx playwright install chromium`.
 2. OCR skanów PDF (Azure Document Intelligence / Tesseract)
 3. Full-text search (`pg_trgm` / tsvector)
 4. Audit log zmian dokumentów
-5. Auto-uzupełnianie po NIP (API białej listy MF)
-6. Adapter S3/Azure Blob dla platform bez trwałego filesystemu
+5. Adapter S3/Azure Blob dla platform bez trwałego filesystemu
 
 ## Założenia projektowe
 

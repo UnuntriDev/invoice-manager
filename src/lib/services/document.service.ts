@@ -7,6 +7,7 @@ import type {
 import type { Prisma } from "@/generated/prisma/client";
 import { parseMoney } from "@/lib/money";
 import { processAttachmentCleanupTask } from "@/lib/services/attachment-reconciliation.service";
+import { resolveCategoryFromRules } from "@/lib/services/categorization-rule.service";
 import { DuplicateError } from "@/lib/errors/validation-errors";
 
 export { DuplicateError } from "@/lib/errors/validation-errors";
@@ -149,11 +150,14 @@ export async function createDocument(data: ManualDocumentCreate) {
   if (!categoryId) {
     const contractor = await prisma.contractor.findUnique({
       where: { id: data.contractorId },
-      select: { defaultCategoryId: true },
+      select: { defaultCategoryId: true, name: true },
     });
-    if (contractor?.defaultCategoryId) {
-      categoryId = contractor.defaultCategoryId;
-    }
+    categoryId =
+      contractor?.defaultCategoryId ??
+      (await resolveCategoryFromRules(prisma, {
+        contractorName: contractor?.name,
+        invoiceNumber: data.invoiceNumber,
+      }));
   }
 
   return prisma.document.create({

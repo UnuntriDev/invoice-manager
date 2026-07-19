@@ -8,6 +8,7 @@ import type {
 } from "@/lib/ksef/ksef-client.interface";
 import { ksefInvoiceBatchSchema } from "@/lib/validators/schemas";
 import { parseMoney } from "@/lib/money";
+import { matchCategorizationRule } from "@/lib/category-rules";
 
 export type KSeFImportResult =
   | {
@@ -115,6 +116,12 @@ export async function importKSeFBatch(
           contractorsByNip.set(counterparty.nip, contractor);
         }
 
+        // Reguły słów kluczowych pobrane raz na batch; działają tylko dla
+        // kontrahentów bez domyślnej kategorii.
+        const rules = await tx.categorizationRule.findMany({
+          where: { isActive: true },
+        });
+
         const documents = uniqueInvoices.map((invoice) => {
           const counterparty = getCounterparty(invoice, isCost);
           const contractor = contractorsByNip.get(counterparty.nip);
@@ -133,7 +140,12 @@ export async function importKSeFBatch(
             amountVat: parseMoney(invoice.amountVat),
             amountGross: parseMoney(invoice.amountGross),
             bankAccountNumber: invoice.bankAccountNumber,
-            categoryId: contractor.defaultCategoryId,
+            categoryId:
+              contractor.defaultCategoryId ??
+              matchCategorizationRule(rules, {
+                contractorName: counterparty.name,
+                invoiceNumber: invoice.invoiceNumber,
+              }),
             source: "KSEF" as const,
             ksefNumber: invoice.ksefNumber,
             status: "BUFFER" as const,

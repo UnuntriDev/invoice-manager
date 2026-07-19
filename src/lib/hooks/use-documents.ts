@@ -255,6 +255,62 @@ export function useDeleteDocumentType() {
   });
 }
 
+export interface CategorizationRulePayload {
+  pattern: string;
+  matchField: string;
+  categoryId: string;
+  priority: number;
+  isActive: boolean;
+}
+
+export function useCategorizationRules() {
+  return useQuery({
+    queryKey: ["categorizationRules"],
+    queryFn: () => fetchJson("/api/categorization-rules"),
+  });
+}
+
+export function useCreateCategorizationRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CategorizationRulePayload) =>
+      fetchJson("/api/categorization-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["categorizationRules"] });
+    },
+  });
+}
+
+export function useUpdateCategorizationRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<CategorizationRulePayload> }) =>
+      fetchJson(`/api/categorization-rules/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["categorizationRules"] });
+    },
+  });
+}
+
+export function useDeleteCategorizationRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetchJson(`/api/categorization-rules/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["categorizationRules"] });
+    },
+  });
+}
+
 export function useColumnConfig() {
   return useQuery({
     queryKey: ["columnConfig"],

@@ -4,7 +4,7 @@ test.describe("Paleta poleceń", () => {
   test("nawiguje do strony przez wyszukiwanie", async ({ page }) => {
     await page.goto("/documents");
 
-    await page.keyboard.press("Control+k");
+    await page.getByText("Szukaj w aplikacji...", { exact: true }).click();
     const palette = page.getByRole("dialog", { name: "Przejdź do…" });
     await expect(palette).toBeVisible();
 
@@ -22,7 +22,7 @@ test.describe("Paleta poleceń", () => {
   }) => {
     await page.goto("/documents");
 
-    await page.keyboard.press("Control+k");
+    await page.getByText("Szukaj w aplikacji...", { exact: true }).click();
     const palette = page.getByRole("dialog", { name: "Przejdź do…" });
     await palette.getByPlaceholder("Przejdź do…").fill("Dodaj kontrahenta");
     await palette.getByRole("button", { name: "Dodaj kontrahenta" }).click();

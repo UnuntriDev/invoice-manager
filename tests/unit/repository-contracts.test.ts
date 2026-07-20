@@ -37,6 +37,17 @@ describe("repository deployment and data integrity contracts", () => {
     expect(productionCompose).not.toMatch(/^\s+db:\s*$/m);
   });
 
+  it("keeps the PDF.js Node polyfill and worker in the standalone runtime", () => {
+    const packageJson = repositoryFile("package.json");
+    const nextConfig = repositoryFile("next.config.ts");
+
+    expect(packageJson).toContain('"@napi-rs/canvas"');
+    expect(nextConfig).toContain('"@napi-rs/canvas"');
+    expect(nextConfig).toContain(
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    );
+  });
+
   it("keeps every required quality gate in CI", () => {
     const workflow = repositoryFile(".github/workflows/ci.yml");
 

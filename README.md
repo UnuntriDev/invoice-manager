@@ -64,6 +64,28 @@ Wartości w `.env.example` służą wyłącznie do lokalnego uruchomienia w tryb
 mock. Przed wdrożeniem ustaw osobne, losowe sekrety i trwały wolumen dla
 `UPLOAD_DIR`; szczegóły zawiera [`docs/deployment.md`](docs/deployment.md).
 
+### Testowanie uploadu XML
+
+Konfiguracja demonstracyjna z `.env.example` używa
+`COMPANY_NIP=9876543210` dla firmy Gumijagoda. Wgrywany XML FA(2)/FA(3) musi
+zawierać ten NIP dokładnie po jednej stronie dokumentu:
+
+- NIP firmy jako nabywca — dokument jest rozpoznawany jako faktura kosztowa,
+  a sprzedawca zostaje kontrahentem;
+- NIP firmy jako sprzedawca — dokument jest rozpoznawany jako faktura
+  sprzedażowa, a nabywca zostaje kontrahentem.
+
+Jeżeli NIP z `COMPANY_NIP` nie występuje ani jako sprzedawca, ani jako nabywca,
+aplikacja celowo odrzuca dokument komunikatem o niedopasowanym NIP-ie. Nie jest
+to błąd parsera: bez tej informacji nie da się jednoznacznie określić kierunku
+faktury. Istnienie jednego z NIP-ów XML w bazie kontrahentów nie zastępuje tej
+kontroli i aplikacja nie zgaduje własnej firmy na podstawie kontrahentów.
+
+Przy testowaniu własnym plikiem ustaw `COMPANY_NIP` na NIP swojej firmy obecny
+w XML, a następnie uruchom aplikację ponownie. Na Railway zmiana tej wartości
+w sekcji Variables powoduje ponowne wdrożenie usługi. Plik przyjęty poprawnie
+trafia do bufora i dopiero po akceptacji pojawia się w rejestrze.
+
 ## Architektura
 
 ```
@@ -120,8 +142,8 @@ NIP/IBAN (sumy kontrolne, nie regex).
 ```bash
 npm run lint          # ESLint
 npm run typecheck     # tsc --noEmit
-npm test              # jednostkowe: 34 zestawy, 189 testów (Jest)
-npm run test:e2e      # E2E: 11 testów (Playwright, wymaga działającej aplikacji)
+npm test              # jednostkowe: 34 zestawy, 190 testów (Jest)
+npm run test:e2e      # E2E: 12 testów (Playwright, wymaga działającej aplikacji)
 npm run build         # produkcyjny build
 ```
 

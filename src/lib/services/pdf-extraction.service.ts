@@ -1,4 +1,8 @@
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import {
+  DOMMatrix as CanvasDOMMatrix,
+  ImageData as CanvasImageData,
+  Path2D as CanvasPath2D,
+} from "@napi-rs/canvas";
 import prisma from "@/lib/prisma";
 import { extractInvoiceFieldsFromLines } from "@/lib/pdf/invoice-text-parser";
 
@@ -21,7 +25,21 @@ type PdfTextItem = {
   transform?: number[];
 };
 
+let pdfJsPromise: Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | null =
+  null;
+
+async function loadPdfJs() {
+  const runtimeGlobals = globalThis as unknown as Record<string, unknown>;
+  runtimeGlobals.DOMMatrix ??= CanvasDOMMatrix;
+  runtimeGlobals.ImageData ??= CanvasImageData;
+  runtimeGlobals.Path2D ??= CanvasPath2D;
+
+  pdfJsPromise ??= import("pdfjs-dist/legacy/build/pdf.mjs");
+  return pdfJsPromise;
+}
+
 async function extractPdfLines(buffer: Buffer): Promise<string[]> {
+  const { getDocument } = await loadPdfJs();
   const loadingTask = getDocument({ data: new Uint8Array(buffer) });
   const pdf = await loadingTask.promise;
   const lines: string[] = [];

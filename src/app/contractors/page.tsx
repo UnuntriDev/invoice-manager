@@ -536,11 +536,12 @@ function ContractorsPageContent() {
                   placeholder="000 000 00 00"
                   maxLength={13}
                   disabled={!!editing}
+                  className="h-11 md:h-8"
                 />
                 <Button
                   type="button"
                   variant="outline"
-                  className="shrink-0"
+                  className="h-11 shrink-0 md:h-8"
                   onClick={handleNipLookup}
                   disabled={nipDigits.length !== 10 || lookupPending}
                   title="Pobierz nazwę i adres z wykazu podatników VAT"
@@ -575,11 +576,12 @@ function ContractorsPageContent() {
                   }}
                   placeholder="00 0000 0000 0000 0000 0000 0000"
                   maxLength={32}
+                  className="h-11 md:h-8"
                 />
                 <Button
                   type="button"
                   variant="outline"
-                  className="shrink-0"
+                  className="h-11 shrink-0 md:h-8"
                   onClick={handleAccountVerify}
                   disabled={
                     nipDigits.length !== 10 || accountDigits.length !== 26 || verifyPending
@@ -639,10 +641,11 @@ function ContractorsPageContent() {
               </Select>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setFormOpen(false)}>
+              <Button variant="outline" className="h-11 md:h-8" onClick={() => setFormOpen(false)}>
                 Anuluj
               </Button>
               <Button
+                className="h-11 md:h-8"
                 onClick={handleSubmit}
                 disabled={!name || !nip || createMut.isPending || updateMut.isPending}
               >

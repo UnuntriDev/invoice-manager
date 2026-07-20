@@ -183,7 +183,10 @@ export function AppSidebar() {
             className="fixed inset-0 bg-black/10 supports-backdrop-filter:backdrop-blur-xs"
             onClick={() => setMobileOpen(false)}
           />
-          <div className="fixed inset-y-0 left-0 z-50 flex h-full w-[18rem] flex-col gap-0 border-r border-sidebar-border bg-sidebar p-0 text-sidebar-foreground shadow-lg animate-in slide-in-from-left">
+          <div
+            id="app-sidebar-mobile"
+            className="fixed inset-y-0 left-0 z-50 flex h-full w-[18rem] flex-col gap-0 border-r border-sidebar-border bg-sidebar p-0 text-sidebar-foreground shadow-lg animate-in slide-in-from-left"
+          >
             <div className="flex flex-col gap-0.5 border-b border-sidebar-border p-4">
               <Brand />
             </div>

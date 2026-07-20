@@ -12,7 +12,7 @@ import { UserProfile } from "@/components/user-profile";
 import { cn } from "@/lib/utils";
 
 export function AppTopbar() {
-  const { collapsed, toggle, setMobileOpen } = useSidebar();
+  const { collapsed, toggle, mobileOpen, setMobileOpen } = useSidebar();
   const { setOpen: openPalette } = useCommandPalette();
 
   function handleBurger() {
@@ -68,6 +68,8 @@ export function AppTopbar() {
           className="size-11 shrink-0 text-sidebar-foreground hover:bg-white/10 hover:text-sidebar-foreground md:size-7"
           onClick={handleBurger}
           aria-label="Przełącz nawigację"
+          aria-expanded={mobileOpen}
+          aria-controls="app-sidebar-mobile"
         >
           <Menu className="size-5" />
         </Button>
